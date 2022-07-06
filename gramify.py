@@ -89,7 +89,7 @@ def kgramify(docopt_args):
         min_length = int(docopt_args.get('--min-length'))
 
 
-    if ARGS.get('--min-length') is None:
+    if ARGS.get('--max-length') is None:
         max_length = 32 if rolling else 8
     else:
         max_length = int(docopt_args.get('--max-length'))
@@ -190,7 +190,7 @@ def cgramify(docopt_args):
         min_length = int(docopt_args.get('--min-length'))
 
 
-    if ARGS.get('--min-length') is None:
+    if ARGS.get('--max-length') is None:
         max_length = 32
     else:
         max_length = int(docopt_args.get('--max-length'))
