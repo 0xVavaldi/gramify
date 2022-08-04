@@ -62,8 +62,8 @@ def ngramify(docopt_args):
         for j in range(0, len(data)-1, 1):
             output_set = data[j:j+i]
             output_string = " ".join(output_set)
-            if output_string[-1] in ["?", ".", "!", ",", ";", "\"", "'"]:
-                output_file_handler.write(output_string + "\n")
+            # if output_string[-1] in ["?", ".", "!", ",", ";", "\"", "'"]:
+            output_file_handler.write(output_string + "\n")
 
     new_data = []
     for word in data:
@@ -89,7 +89,7 @@ def kgramify(docopt_args):
         min_length = int(docopt_args.get('--min-length'))
 
 
-    if ARGS.get('--min-length') is None:
+    if ARGS.get('--max-length') is None:
         max_length = 32 if rolling else 8
     else:
         max_length = int(docopt_args.get('--max-length'))
@@ -190,7 +190,7 @@ def cgramify(docopt_args):
         min_length = int(docopt_args.get('--min-length'))
 
 
-    if ARGS.get('--min-length') is None:
+    if ARGS.get('--max-length') is None:
         max_length = 32
     else:
         max_length = int(docopt_args.get('--max-length'))
@@ -199,14 +199,20 @@ def cgramify(docopt_args):
     output_file_handler = open("c_" + output_file, "a+", encoding="utf-8", errors="ignore")
     print("Writing output to: c_" + output_file)
 
-    character_buffer = []
     for line in input_file_handler:
         original_plaintext = line.rstrip("\n").rstrip("\r")
         last_charset = 'empty'
+        character_buffer = []
         for char in original_plaintext:
-            if char in lowercase:
+            is_lowercase = True if char in lowercase else False
+            if not is_lowercase:
+                is_uppercase = True if char in uppercase else False
+
+            if len(character_buffer) == 0 and (is_lowercase or is_uppercase):
+                current_charset = 'mixedcase'
+            elif is_lowercase:
                 current_charset = 'lowercase'
-            elif char in uppercase:
+            elif is_uppercase:
                 current_charset = 'uppercase'
             elif char in numeric:
                 current_charset = 'numeric'
@@ -217,17 +223,29 @@ def cgramify(docopt_args):
 
             if current_charset == last_charset or current_charset == 'unknown':  # treat unknown as every set
                 character_buffer.append(char)
-            else:
-                if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
-                    output_file_handler.write("".join(character_buffer) + "\n")
+                continue
+
+            if current_charset in ['lowercase', 'uppercase'] and last_charset == 'mixedcase':
+                character_buffer.append(char)
                 last_charset = current_charset
-                character_buffer = [char]
+                continue
+            
+            if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
+                output_file_handler.write("".join(character_buffer) + "\n")
+                if(current_charset == 'lowercase' or current_charset == 'uppercase'): current_charset = 'mixedcase'
+            last_charset = current_charset
+            character_buffer = [char]
+
         if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
             output_file_handler.write("".join(character_buffer) + "\n")
 
         if ARGS.get('--mixed'):
             # Mixed case + less strict special check
+            i = 0
             for char in original_plaintext:
+                if i == 0: 
+                    char = strtolower(char)
+                    i += 1
                 if char in lowercase or char in uppercase:
                     current_charset = 'mixedcase'
                 elif char in numeric:
