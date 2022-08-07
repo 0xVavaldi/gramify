@@ -3,7 +3,7 @@
 Usage:
   gramify.py word <input_file> <output_file> [--min-length=<int>] [--max-length=<int>]
   gramify.py character <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--rolling]
-  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed]
+  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>]
   gramify.py (-h | --help)
   gramify.py --version
 
@@ -14,11 +14,19 @@ Options:
   --max-length=<int>            Maximum size of k,n,c-gram output.
   --rolling                     Make kgrams in one file based on length instead of into three groups of start, mid, end.
   --mixed                       Allow for mixed charset cgrams
+  --filter=<str>                Filter for specific outputs using start, mid, end. (Default uses no filter)
 
 Gram-types:
   K-Gram (Character):           Letter based https://nlp.stanford.edu/IR-book/html/htmledition/k-gram-indexes-for-wildcard-queries-1.html
   N-Gram (Word):                Word based https://en.wikipedia.org/wiki/N-gram
   C-Gram (Charset):             Charset boundry inspired by https://github.com/hops/pack2/blob/master/src/cgrams.rs
+
+Filter:
+  Format filter using a comma separated string of combinations of start, mid, and end.
+  using --filter 'solo' will output 1 file containing all passwords with exclusively 1 element.
+  using --filter 'start,mid,end' will output 3 files containing the first element, the middle elements and the last element respectively (does not include solo).
+  using --filter 'startmid' will output 1 file containing the first and middle elements, but not the last which is perfect for -a6 hybrid attacks.
+  using --filter 'midend' will output 1 file containing the middle and end elements, but not the first which is perfect for -a7 hybrid attacks.
 """
 import re
 import os
@@ -195,14 +203,58 @@ def cgramify(docopt_args):
     else:
         max_length = int(docopt_args.get('--max-length'))
 
+    if ARGS.get('--filter') is None:
+        output_filter = []
+    else:
+        output_filter = docopt_args.get('--filter')
+        output_filter = output_filter.split(",")
+        for item in output_filter:  # using this more complex filter to allow for more complex filters in the future such as startmidstartend
+            original_item = item
+            has_start = False  # prevent startstart or startmidstart
+            has_mid = False
+            has_end = False
+            if item == "solo": continue
+            while(len(item) > 0):
+                match = False
+                if item.startswith("start"):
+                    match = True
+                    if has_start:
+                        break
+                    has_start = True
+                    item = item[len("start"):]
+                if item.startswith("mid"):
+                    match =  True
+                    if has_mid:
+                        break
+                    has_mid = True
+                    item = item[len("mid"):]
+                if item.startswith("end"):
+                    match =  True
+                    if has_end:
+                        break
+                    has_end = True
+                    item = item[len("end"):]
+                if not match:
+                    break
+            if(len(item) > 0):
+                print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, start, mid, and end, startmid, midend, startend")
+                sys.exit()
+
     input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
     output_file_handler = open("c_" + output_file, "a+", encoding="utf-8", errors="ignore")
     print("Writing output to: c_" + output_file)
+
+    output_filter_file_handler = {}
+    for item in output_filter:
+        output_filter_file_handler[item] = open("c_" + item + "_" + output_file, "a+", encoding="utf-8", errors="ignore")
+        print("Writing filter output to: c_" + item + "_" + output_file)
+
 
     for line in input_file_handler:
         original_plaintext = line.rstrip("\n").rstrip("\r")
         last_charset = 'empty'
         character_buffer = []
+        matches = []
         for char in original_plaintext:
             is_lowercase = True if char in lowercase else False
             if not is_lowercase:
@@ -232,16 +284,50 @@ def cgramify(docopt_args):
             
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
+                matches.append("".join(character_buffer))
+                
+
+
                 if(current_charset == 'lowercase' or current_charset == 'uppercase'): current_charset = 'mixedcase'
             last_charset = current_charset
             character_buffer = [char]
 
         if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
             output_file_handler.write("".join(character_buffer) + "\n")
+            matches.append("".join(character_buffer))
+
+        # Output matches into filter outputs
+        for filter_item in output_filter:
+            filter_output = []
+            if(filter_item == "solo" and len(matches) == 1):
+                output_filter_file_handler[filter_item].write(matches[0] + "\n")
+                continue
+            if len(matches) < 2: continue
+
+            if(filter_item == "start"):
+                filter_output = [matches[0]]
+            if(filter_item == "end"):
+                filter_output = [matches[-1]]
+            if(filter_item == "startend"):
+                filter_output = [matches[0], matches[-1]]
+
+            if len(matches) < 3: continue
+            if(filter_item == "mid"):
+                filter_output = matches[1:-1]
+            if(filter_item == "startmid"):
+                filter_output = matches[:-1]
+            if(filter_item == "midend"):
+                filter_output = matches[1:]
+                
+            for item in filter_output:
+                output_filter_file_handler[filter_item].write(item)
+            if len(filter_output) > 0:
+                output_filter_file_handler[filter_item].write("\n")
 
         if ARGS.get('--mixed'):
             # Mixed case + less strict special check
             i = 0
+            matches = []
             for char in original_plaintext:
                 if i == 0: 
                     char = strtolower(char)
@@ -260,11 +346,41 @@ def cgramify(docopt_args):
                 else:
                     if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                         output_file_handler.write("".join(character_buffer) + "\n")
+                        matches.append("".join(character_buffer))
                     last_charset = current_charset
                     character_buffer = [char]
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
+                matches.append("".join(character_buffer))
 
+            for filter_item in output_filter:
+                filter_output = []
+                if(filter_item == "solo" and len(matches) == 1):
+                    output_filter_file_handler[filter_item].write(matches[0] + "\n")
+                    continue
+                if len(matches) < 2: continue
+
+                if(filter_item == "start"):
+                    filter_output = [matches[0]]
+                if(filter_item == "end"):
+                    filter_output = [matches[-1]]
+                if(filter_item == "startend"):
+                    filter_output = [matches[0], matches[-1]]
+
+                if len(matches) < 3: continue
+                if(filter_item == "mid"):
+                    filter_output = matches[1:-1]
+                if(filter_item == "startmid"):
+                    filter_output = matches[:-1]
+                if(filter_item == "midend"):
+                    filter_output = matches[1:]
+                    
+                for item in filter_output:
+                    output_filter_file_handler[filter_item].write(item)
+                if len(filter_output) > 0:
+                    output_filter_file_handler[filter_item].write("\n")
+
+            matches = []
             # Mixed numeric case + less strict special check
             for char in original_plaintext:
                 if char in lowercase or char in uppercase or char in numeric:
@@ -279,13 +395,45 @@ def cgramify(docopt_args):
                 else:
                     if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                         output_file_handler.write("".join(character_buffer) + "\n")
+                        matches.append("".join(character_buffer))
                     last_charset = current_charset
                     character_buffer = [char]
+
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
+                matches.append("".join(character_buffer))
+
+            for filter_item in output_filter:
+                filter_output = []
+                if(filter_item == "solo" and len(matches) == 1):
+                    output_filter_file_handler[filter_item].write(matches[0] + "\n")
+                    continue
+                if len(matches) < 2: continue
+
+                if(filter_item == "start"):
+                    filter_output = [matches[0]]
+                if(filter_item == "end"):
+                    filter_output = [matches[-1]]
+                if(filter_item == "startend"):
+                    filter_output = [matches[0], matches[-1]]
+
+                if len(matches) < 3: continue
+                if(filter_item == "mid"):
+                    filter_output = matches[1:-1]
+                if(filter_item == "startmid"):
+                    filter_output = matches[:-1]
+                if(filter_item == "midend"):
+                    filter_output = matches[1:]
+                    
+                for item in filter_output:
+                    output_filter_file_handler[filter_item].write(item)
+                if len(filter_output) > 0:
+                    output_filter_file_handler[filter_item].write("\n")
 
     input_file_handler.close()
     output_file_handler.close()
+    for filter_item in output_filter:
+        output_filter_file_handler[filter_item].close()
 
 if __name__ == '__main__':
     ARGS = docopt(__doc__, version='2.3')

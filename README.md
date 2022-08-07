@@ -94,7 +94,8 @@ Read more: https://nlp.stanford.edu/IR-book/html/htmledition/k-gram-indexes-for-
 
 --min-length refers to the minimum amount of characters that each word should have. Ergo. at least `<int>` characters (Default: 4)
 --max-length refers to the maximum amount of characters that each word should have. Ergo. at least `<int>` characters (Default: 32)
---mixed do not make a distinction between upper and lowercase
+--mixed do not make a distinction between upper and lowercase or upper, lowercase and numeric in two different passes
+--filter make use of the start, mid and end filters to combine and only grab the first element, mid elements, or last element.
 
 
 This type of n-gram is more focused on character set boundries. Moving from UPPERCASE to lowercase. From Digits to lowercase or vice versa. This way you're able to take the passwords (assuming a default --min-length of 4):
@@ -105,6 +106,25 @@ THEBESTINTHEWORLD54321 -> [THEBESTINTHEWORLD, 54321]
 there are a lot of things to say -> [there, things]
 ```
 This can be great for extracting words or common patterns out of passwords, removing punctuation or discovering common themes. From here on we can use rules on our newly discovered words to find new passwords. Gramify builds on this concept by allowing an Uppercase character to go to a lowercase character, but only if it's the first in the word allowing the capture of items like `PassWord123456 -> [Pass, Word, 123456]`.
+
+An example of --filter using the above examples and the following available filters: solo, start, mid, and end, startmid, midend, startend:
+```
+python3 gramify.py charset hashmob.net_2022-07-03.found test.txt --filter 'start,mid,end,startmid,midend'
+
+password123456 will be converted into [password, 123456] which will have:
+password => start
+password123456 => startend
+123456 => end
+
+PASSword123123magicman will be converted into [PASS, word, 123123, magicman] which will have:
+PASS => start
+word123123 => mid
+magicman => end
+PASSword123123 => startmid
+word123123magicman => midend
+
+password will be converted into [password]: which falls under 'solo' and therefore isn't written to a file as it's not part of our filters.
+```
 
 If you want even more options: using the --mixed will help with short words with many upper and lowercase like:
 ```
