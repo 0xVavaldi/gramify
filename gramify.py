@@ -436,7 +436,7 @@ def cgramify(docopt_args):
         output_filter_file_handler[filter_item].close()
 
 if __name__ == '__main__':
-    ARGS = docopt(__doc__, version='2.3')
+    ARGS = docopt(__doc__, version='2.4')
     if not os.path.exists(ARGS.get('<input_file>')):
         print("Input file does not exist.")
         sys.exit()
