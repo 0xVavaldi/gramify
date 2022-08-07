@@ -330,7 +330,7 @@ def cgramify(docopt_args):
             matches = []
             for char in original_plaintext:
                 if i == 0: 
-                    char = strtolower(char)
+                    char = char.lower()
                     i += 1
                 if char in lowercase or char in uppercase:
                     current_charset = 'mixedcase'
