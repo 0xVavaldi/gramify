@@ -36,7 +36,7 @@ from docopt import docopt
 sys.setrecursionlimit(5000)
 
 
-def output_filter_writer(output_filter_file_handler, matches):
+def output_filter_writer(output_filter, output_filter_file_handler, matches):
     for filter_item in output_filter:
         filter_output = []
         if(filter_item == "solo" and len(matches) == 1):
@@ -343,7 +343,7 @@ def cgramify(docopt_args):
             matches.append("".join(character_buffer))
 
         # Output matches into filter outputs
-        output_filter_writer(output_filter_file_handler, matches)
+        output_filter_writer(output_filter, output_filter_file_handler, matches)
 
         if ARGS.get('--mixed'):
             # Mixed case + less strict special check
@@ -375,7 +375,7 @@ def cgramify(docopt_args):
                 matches.append("".join(character_buffer))
 
             # Output matches into filter outputs
-            output_filter_writer(output_filter_file_handler, matches)
+            output_filter_writer(output_filter, output_filter_file_handler, matches)
 
             matches = []
             # Mixed numeric case + less strict special check
@@ -401,7 +401,7 @@ def cgramify(docopt_args):
                 matches.append("".join(character_buffer))
 
             # Output matches into filter outputs
-            output_filter_writer(output_filter_file_handler, matches)
+            output_filter_writer(output_filter, output_filter_file_handler, matches)
 
     # Close file handles
     input_file_handler.close()
