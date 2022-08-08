@@ -24,7 +24,8 @@ Gram-types:
 Filter:
   Format filter using a comma separated string of combinations of start, mid, and end.
   using --filter 'solo' will output 1 file containing all passwords with exclusively 1 element.
-  using --filter 'start,mid,end' will output 3 files containing the first element, the middle elements and the last element respectively (does not include solo).
+  using --filter 'duo,duostart,duoend' will output 3 files containing all passwords with exclusively 2 element.
+  using --filter 'start,mid,end' will output 3 files containing the first element, the middle elements and the last element respectively (does not include solo or duo).
   using --filter 'startmid' will output 1 file containing the first and middle elements, but not the last which is perfect for -a6 hybrid attacks.
   using --filter 'midend' will output 1 file containing the middle and end elements, but not the first which is perfect for -a7 hybrid attacks.
 """
@@ -33,6 +34,47 @@ import os
 import sys
 from docopt import docopt
 sys.setrecursionlimit(5000)
+
+
+def output_filter_writer(output_filter_file_handler):
+    for filter_item in output_filter:
+        filter_output = []
+        if(filter_item == "solo" and len(matches) == 1):
+            output_filter_file_handler[filter_item].write(matches[0] + "\n")
+            continue
+        if len(matches) < 2: continue
+
+        if len(matches) == 2:
+            if filter_item == "duostart":
+                output_filter_file_handler[filter_item].write(matches[0] + "\n")
+                continue
+            if filter_item == "duoend":
+                output_filter_file_handler[filter_item].write(matches[1] + "\n")
+                continue
+            if filter_item == "duo":
+                output_filter_file_handler[filter_item].write(matches[0] + matches[1] + "\n")
+                continue
+        if len(matches) < 3: continue
+
+        if filter_item == "start":
+            filter_output = [matches[0]]
+        if filter_item == "end":
+            filter_output = [matches[-1]]
+        if filter_item == "startend":
+            filter_output = [matches[0], matches[-1]]
+
+        if filter_item == "mid":
+            filter_output = matches[1:-1]
+        if filter_item == "startmid":
+            filter_output = matches[:-1]
+        if filter_item == "midend":
+            filter_output = matches[1:]
+            
+        for item in filter_output:
+            output_filter_file_handler[filter_item].write(item)
+        if len(filter_output) > 0:
+            output_filter_file_handler[filter_item].write("\n")
+
 
 
 def alphanum_string(stringx):
@@ -213,7 +255,7 @@ def cgramify(docopt_args):
             has_start = False  # prevent startstart or startmidstart
             has_mid = False
             has_end = False
-            if item == "solo": continue
+            if item in ["solo", "duo", "duostart", "duoend"]: continue
             while(len(item) > 0):
                 match = False
                 if item.startswith("start"):
@@ -223,6 +265,8 @@ def cgramify(docopt_args):
                     has_start = True
                     item = item[len("start"):]
                 if item.startswith("mid"):
+                    if(min_length != 1):
+                        print("Warning: You are using a filter with 'mid'. It is highly advised to set --min-length to 1 for this.")
                     match =  True
                     if has_mid:
                         break
@@ -237,7 +281,7 @@ def cgramify(docopt_args):
                 if not match:
                     break
             if(len(item) > 0):
-                print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, start, mid, and end, startmid, midend, startend")
+                print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, duo, duostart, duoend, start, mid, and end, startmid, midend, startend")
                 sys.exit()
 
     input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
@@ -249,7 +293,9 @@ def cgramify(docopt_args):
         output_filter_file_handler[item] = open("c_" + item + "_" + output_file, "a+", encoding="utf-8", errors="ignore")
         print("Writing filter output to: c_" + item + "_" + output_file)
 
-
+    ########################
+    ### Start processing ###
+    ########################
     for line in input_file_handler:
         original_plaintext = line.rstrip("\n").rstrip("\r")
         last_charset = 'empty'
@@ -297,32 +343,7 @@ def cgramify(docopt_args):
             matches.append("".join(character_buffer))
 
         # Output matches into filter outputs
-        for filter_item in output_filter:
-            filter_output = []
-            if(filter_item == "solo" and len(matches) == 1):
-                output_filter_file_handler[filter_item].write(matches[0] + "\n")
-                continue
-            if len(matches) < 2: continue
-
-            if(filter_item == "start"):
-                filter_output = [matches[0]]
-            if(filter_item == "end"):
-                filter_output = [matches[-1]]
-            if(filter_item == "startend"):
-                filter_output = [matches[0], matches[-1]]
-
-            if len(matches) < 3: continue
-            if(filter_item == "mid"):
-                filter_output = matches[1:-1]
-            if(filter_item == "startmid"):
-                filter_output = matches[:-1]
-            if(filter_item == "midend"):
-                filter_output = matches[1:]
-                
-            for item in filter_output:
-                output_filter_file_handler[filter_item].write(item)
-            if len(filter_output) > 0:
-                output_filter_file_handler[filter_item].write("\n")
+        output_filter_writer(output_filter_file_handler, matches)
 
         if ARGS.get('--mixed'):
             # Mixed case + less strict special check
@@ -353,32 +374,8 @@ def cgramify(docopt_args):
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
 
-            for filter_item in output_filter:
-                filter_output = []
-                if(filter_item == "solo" and len(matches) == 1):
-                    output_filter_file_handler[filter_item].write(matches[0] + "\n")
-                    continue
-                if len(matches) < 2: continue
-
-                if(filter_item == "start"):
-                    filter_output = [matches[0]]
-                if(filter_item == "end"):
-                    filter_output = [matches[-1]]
-                if(filter_item == "startend"):
-                    filter_output = [matches[0], matches[-1]]
-
-                if len(matches) < 3: continue
-                if(filter_item == "mid"):
-                    filter_output = matches[1:-1]
-                if(filter_item == "startmid"):
-                    filter_output = matches[:-1]
-                if(filter_item == "midend"):
-                    filter_output = matches[1:]
-                    
-                for item in filter_output:
-                    output_filter_file_handler[filter_item].write(item)
-                if len(filter_output) > 0:
-                    output_filter_file_handler[filter_item].write("\n")
+            # Output matches into filter outputs
+            output_filter_writer(output_filter_file_handler, matches)
 
             matches = []
             # Mixed numeric case + less strict special check
@@ -403,33 +400,10 @@ def cgramify(docopt_args):
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
 
-            for filter_item in output_filter:
-                filter_output = []
-                if(filter_item == "solo" and len(matches) == 1):
-                    output_filter_file_handler[filter_item].write(matches[0] + "\n")
-                    continue
-                if len(matches) < 2: continue
+            # Output matches into filter outputs
+            output_filter_writer(output_filter_file_handler, matches)
 
-                if(filter_item == "start"):
-                    filter_output = [matches[0]]
-                if(filter_item == "end"):
-                    filter_output = [matches[-1]]
-                if(filter_item == "startend"):
-                    filter_output = [matches[0], matches[-1]]
-
-                if len(matches) < 3: continue
-                if(filter_item == "mid"):
-                    filter_output = matches[1:-1]
-                if(filter_item == "startmid"):
-                    filter_output = matches[:-1]
-                if(filter_item == "midend"):
-                    filter_output = matches[1:]
-                    
-                for item in filter_output:
-                    output_filter_file_handler[filter_item].write(item)
-                if len(filter_output) > 0:
-                    output_filter_file_handler[filter_item].write("\n")
-
+    # Close file handles
     input_file_handler.close()
     output_file_handler.close()
     for filter_item in output_filter:
