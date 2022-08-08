@@ -36,7 +36,7 @@ from docopt import docopt
 sys.setrecursionlimit(5000)
 
 
-def output_filter_writer(output_filter_file_handler):
+def output_filter_writer(output_filter_file_handler, matches):
     for filter_item in output_filter:
         filter_output = []
         if(filter_item == "solo" and len(matches) == 1):
