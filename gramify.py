@@ -134,7 +134,7 @@ def kgramify(docopt_args):
     rolling = bool(docopt_args['--rolling'])
 
     if ARGS.get('--min-length') is None:
-        min_length = 4
+        min_length = 3
     else:
         min_length = int(docopt_args.get('--min-length'))
 
@@ -298,6 +298,7 @@ def cgramify(docopt_args):
     ########################
     for line in input_file_handler:
         original_plaintext = line.rstrip("\n").rstrip("\r")
+        if line.startswith("$HEX["): continue  # Skip Hexified plains to prevent bias
         last_charset = 'empty'
         character_buffer = []
         matches = []
