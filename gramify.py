@@ -186,20 +186,31 @@ def kgramify(docopt_args):
 
 
 def kgramify_process(return_array, input_word, start, end, min_length, max_length):
-    if start >= len(input_word) or len(input_word) <= min_length:
+    if start >= len(input_word) or len(input_word) < min_length:
         return return_array
 
-    elif end-start == max_length and end < len(input_word):
+    elif start == 0 and end-start == max_length and end < len(input_word):
+        # First section & Mid section
+        next_start = start+1
+        next_end = end+1
+        if end-start >= min_length:
+            return_array[0].append(input_word[start:end])
+            return_array[1].append(input_word[start:end])
+
+    elif start > 0 and end-start == max_length and end < len(input_word):
+        # Middle section
         next_start = start+1
         next_end = end+1
         if end-start >= min_length:
             return_array[1].append(input_word[start:end])
 
     elif end-start == max_length and end == len(input_word):
+        # Mid and End section
         next_start = start+1
         next_end = end
         if end-start >= min_length:
             return_array[1].append(input_word[start:end])
+            return_array[2].append(input_word[start:end])
 
     elif start == 0 and end < len(input_word) and end-start <= max_length and end-start < len(input_word)-1:
         # First section
@@ -210,18 +221,18 @@ def kgramify_process(return_array, input_word, start, end, min_length, max_lengt
 
     elif start == 0 and end < len(input_word) and end-start <= max_length and end-start == len(input_word)-1:
         # First section
+        print("hit4")
         next_start = start+1
         next_end = end+1
         if end-start >= min_length:
             return_array[0].append(input_word[start:end])
-
     elif start > 0 and end == len(input_word) and end-start < max_length:
-        # First section
+        # Last section
         next_start = start+1
         next_end = end
         if end-start >= min_length:
             return_array[2].append(input_word[start:end])
-    # Middle
+
     return kgramify_process(return_array, input_word, next_start, next_end, min_length, max_length)
 
 def cgramify(docopt_args):
