@@ -69,7 +69,7 @@ def output_filter_writer(output_filter, output_filter_file_handler, matches):
             filter_output = matches[:-1]
         if filter_item == "midend":
             filter_output = matches[1:]
-            
+
         for item in filter_output:
             output_filter_file_handler[filter_item].write(item)
         if len(filter_output) > 0:
@@ -186,6 +186,7 @@ def kgramify(docopt_args):
 
 
 def kgramify_process(return_array, input_word, start, end, min_length, max_length):
+    next_start = 0
     if start >= len(input_word) or len(input_word) < min_length:
         return return_array
 
@@ -196,14 +197,12 @@ def kgramify_process(return_array, input_word, start, end, min_length, max_lengt
         if end-start >= min_length:
             return_array[0].append(input_word[start:end])
             return_array[1].append(input_word[start:end])
-
     elif start > 0 and end-start == max_length and end < len(input_word):
         # Middle section
         next_start = start+1
         next_end = end+1
         if end-start >= min_length:
             return_array[1].append(input_word[start:end])
-
     elif end-start == max_length and end == len(input_word):
         # Mid and End section
         next_start = start+1
@@ -221,7 +220,6 @@ def kgramify_process(return_array, input_word, start, end, min_length, max_lengt
 
     elif start == 0 and end < len(input_word) and end-start <= max_length and end-start == len(input_word)-1:
         # First section
-        print("hit4")
         next_start = start+1
         next_end = end+1
         if end-start >= min_length:
@@ -241,7 +239,7 @@ def cgramify(docopt_args):
     lowercase = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']
     uppercase = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
     numeric = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-    special = ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ']
+    special =      ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ']
     special_full = ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ', '\'', '-']
     # does not include ' and - because of their common use in normal language
 
@@ -339,14 +337,13 @@ def cgramify(docopt_args):
                 character_buffer.append(char)
                 last_charset = current_charset
                 continue
-            
+
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
-                
+                if(current_charset == 'lowercase' or current_charset == 'uppercase'):
+                    current_charset = 'mixedcase'
 
-
-                if(current_charset == 'lowercase' or current_charset == 'uppercase'): current_charset = 'mixedcase'
             last_charset = current_charset
             character_buffer = [char]
 
@@ -359,12 +356,15 @@ def cgramify(docopt_args):
 
         if ARGS.get('--mixed'):
             # Mixed case + less strict special check
-            i = 0
+            lowercased = False
             matches = []
+            character_buffer = []
+            last_charset = "empty"
             for char in original_plaintext:
-                if i == 0: 
+                if not lowercased:
                     char = char.lower()
-                    i += 1
+                    lowercased = True
+
                 if char in lowercase or char in uppercase:
                     current_charset = 'mixedcase'
                 elif char in numeric:
@@ -382,14 +382,18 @@ def cgramify(docopt_args):
                         matches.append("".join(character_buffer))
                     last_charset = current_charset
                     character_buffer = [char]
+            
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
+
 
             # Output matches into filter outputs
             output_filter_writer(output_filter, output_filter_file_handler, matches)
 
             matches = []
+            character_buffer = []
+
             # Mixed numeric case + less strict special check
             for char in original_plaintext:
                 if char in lowercase or char in uppercase or char in numeric:
