@@ -3,7 +3,7 @@
 Usage:
   gramify.py word <input_file> <output_file> [--min-length=<int>] [--max-length=<int>]
   gramify.py character <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--rolling]
-  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>]
+  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<str>]
   gramify.py (-h | --help)
   gramify.py --version
 
@@ -15,6 +15,7 @@ Options:
   --rolling                     Make kgrams in one file based on length instead of into three groups of start, mid, end.
   --mixed                       Allow for mixed charset cgrams
   --filter=<str>                Filter for specific outputs using start, mid, end. (Default uses no filter)
+  --filter-combo-length=<int>   Create automatic filter combinations of start,mid,end (startmid,startmidmidendend) based on length
 
 Gram-types:
   K-Gram (Character):           Letter based https://nlp.stanford.edu/IR-book/html/htmledition/k-gram-indexes-for-wildcard-queries-1.html
@@ -32,6 +33,7 @@ Filter:
 import re
 import os
 import sys
+from itertools import permutations
 from docopt import docopt
 sys.setrecursionlimit(5000)
 
@@ -42,7 +44,9 @@ def output_filter_writer(output_filter, output_filter_file_handler, matches):
         if(filter_item == "solo" and len(matches) == 1):
             output_filter_file_handler[filter_item].write(matches[0] + "\n")
             continue
+
         if len(matches) < 2: continue
+        if filter_item == "solo": continue
 
         if len(matches) == 2:
             if filter_item == "duostart":
@@ -55,20 +59,31 @@ def output_filter_writer(output_filter, output_filter_file_handler, matches):
                 output_filter_file_handler[filter_item].write(matches[0] + matches[1] + "\n")
                 continue
         if len(matches) < 3: continue
+        if filter_item == "duostart": continue
+        if filter_item == "duoend": continue
+        if filter_item == "duo": continue
 
-        if filter_item == "start":
-            filter_output = [matches[0]]
-        if filter_item == "end":
-            filter_output = [matches[-1]]
-        if filter_item == "startend":
-            filter_output = [matches[0], matches[-1]]
+        start = matches[0]
+        mid = matches[1:-1]
+        end = matches[-1]
 
-        if filter_item == "mid":
-            filter_output = matches[1:-1]
-        if filter_item == "startmid":
-            filter_output = matches[:-1]
-        if filter_item == "midend":
-            filter_output = matches[1:]
+        _filter = filter_item
+        filter_output = []
+        while _filter != "":
+            if _filter.startswith("start"):
+                filter_output.append(start)
+                _filter = _filter[len("start"):]
+                continue
+
+            if _filter.startswith("mid"):
+                filter_output += mid
+                _filter = _filter[len("mid"):]
+                continue
+
+            if _filter.startswith("end"):
+                filter_output.append(end)
+                _filter = _filter[len("end"):]
+                continue
 
         for item in filter_output:
             output_filter_file_handler[filter_item].write(item)
@@ -186,8 +201,7 @@ def kgramify(docopt_args):
 
 
 def kgramify_process(return_array, input_word, start, end, min_length, max_length):
-    next_start = 0
-    if start >= len(input_word) or len(input_word) < min_length:
+    if start >= len(input_word) or len(input_word) <= min_length:
         return return_array
 
     elif start == 0 and end-start == max_length and end < len(input_word):
@@ -233,6 +247,24 @@ def kgramify_process(return_array, input_word, start, end, min_length, max_lengt
 
     return kgramify_process(return_array, input_word, next_start, next_end, min_length, max_length)
 
+def generate_permutation_with_repeats(elements, length):
+    if length == 0:
+        return [""]
+    
+    permutations = []
+    for element in elements:
+        sub_permutations = generate_permutation_with_repeats(elements, length - 1)
+        for sub_permutation in sub_permutations:
+            permutations.append(element + sub_permutation)
+    
+    return permutations
+
+def has_repeating_substrings(s):
+    for i in range(len(s) - 1):
+        if s[i:i + 2] in s[i + 2:]:
+            return True
+    return False
+
 def cgramify(docopt_args):
     input_file = docopt_args['<input_file>']
     output_file = docopt_args['<output_file>']
@@ -256,41 +288,55 @@ def cgramify(docopt_args):
 
     if ARGS.get('--filter') is None:
         output_filter = []
+
+    if ARGS.get('--filter-combo-length') is None:
+        output_filter = []
     else:
-        output_filter = docopt_args.get('--filter')
-        output_filter = output_filter.split(",")
+        if ARGS.get('--filter') is not None:
+            output_filter = docopt_args.get('--filter')
+            output_filter = output_filter.split(",")
+            if "" in output_filter: output_filter.remove("")
+
+        output_filter_count = int(docopt_args.get('--filter-combo-length'))
+        all_combinations = []
+        for i in range(1, output_filter_count+1):
+            all_combinations += generate_permutation_with_repeats(["start", "mid", "end"], i)
+
+        combinations_output = all_combinations.copy()
+        for item in all_combinations:
+            res = ""
+            for i in range(1, len(item)//2 + 1):
+                if (not len(item) % len(item[0:i]) and item[0:i] *
+                    (len(item)//len(item[0:i])) == item):
+                    res = item[0:i]
+            
+            if len(res) > 1:
+                combinations_output.remove(item)
+        output_filter += combinations_output
+
+        
+
+
         for item in output_filter:  # using this more complex filter to allow for more complex filters in the future such as startmidstartend
             original_item = item
-            has_start = False  # prevent startstart or startmidstart
-            has_mid = False
-            has_end = False
             if item in ["solo", "duo", "duostart", "duoend"]: continue
             while(len(item) > 0):
                 match = False
                 if item.startswith("start"):
                     match = True
-                    if has_start:
-                        break
-                    has_start = True
                     item = item[len("start"):]
                 if item.startswith("mid"):
                     if(min_length != 1):
                         print("Warning: You are using a filter with 'mid'. It is highly advised to set --min-length to 1 for this.")
                     match =  True
-                    if has_mid:
-                        break
-                    has_mid = True
                     item = item[len("mid"):]
                 if item.startswith("end"):
                     match =  True
-                    if has_end:
-                        break
-                    has_end = True
                     item = item[len("end"):]
                 if not match:
                     break
             if(len(item) > 0):
-                print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, duo, duostart, duoend, start, mid, and end, startmid, midend, startend")
+                print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, duo, duostart, duoend, start, mid, and end - or any combination of 'start, mid, or end'. (ex: startmidmidend)")
                 sys.exit()
 
     input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
@@ -443,6 +489,10 @@ if __name__ == '__main__':
         if int(ARGS.get('--min-length')) > int(ARGS.get('--max-length')):
             print("Min Length should be smaller or equal to Max length.")
             exit()
+
+    if ARGS.get('--filter-combo-length') is not None and not ARGS.get('--filter-combo-length').isnumeric():
+        print("Filter combo length should be numeric")
+        exit()
 
     if ARGS.get('word'):
         ngramify(ARGS)
