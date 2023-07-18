@@ -3,7 +3,7 @@
 Usage:
   gramify.py word <input_file> <output_file> [--min-length=<int>] [--max-length=<int>]
   gramify.py character <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--rolling]
-  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<str>]
+  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<str>] [--cgram-rulify]
   gramify.py (-h | --help)
   gramify.py --version
 
@@ -16,6 +16,7 @@ Options:
   --mixed                       Allow for mixed charset cgrams
   --filter=<str>                Filter for specific outputs using start, mid, end. (Default uses no filter)
   --filter-combo-length=<int>   Create automatic filter combinations of start,mid,end (startmid,startmidmidendend) based on length
+  --cgram-rulify                Convert cgram output into hashcat-rules
 
 Gram-types:
   K-Gram (Character):           Letter based https://nlp.stanford.edu/IR-book/html/htmledition/k-gram-indexes-for-wildcard-queries-1.html
@@ -38,7 +39,43 @@ from docopt import docopt
 sys.setrecursionlimit(5000)
 
 
-def output_filter_writer(output_filter, output_filter_file_handler, matches):
+def output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, matches):
+    index_convert = [x for x in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    start_length = 0
+    if cgram_rulify:
+        if len(matches) >= 1:
+            start_length = len(matches[0])
+            # start
+            buffer = []
+            for letter in matches[0][::-1]:
+                buffer.append("^" + letter)
+            matches[0] = " ".join(buffer)
+
+        if len(matches) >= 2:
+            # end
+            buffer = []
+            for letter in matches[-1]:
+                buffer.append("$" + letter)
+            matches[-1] = " ".join(buffer)
+
+        if len(matches) >= 3:
+            # mid
+            offset = start_length
+            index = 1
+            matches_copy = matches[1:-1].copy()
+
+            for mid_part in matches_copy:
+                if offset > 35:
+                    del matches[index]
+                    continue
+                buffer = []
+                for letter in mid_part[::-1]:
+                    buffer.append("i" + index_convert[offset] + letter)
+                offset += len(mid_part)
+                matches[index] = " ".join(buffer)
+                index += 1
+
+
     for filter_item in output_filter:
         filter_output = []
         if(filter_item == "solo" and len(matches) == 1):
@@ -265,6 +302,29 @@ def has_repeating_substrings(s):
             return True
     return False
 
+def glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, all_matches):
+    while True:
+        has_new_matches = False
+        new_matches = []
+        i = 0
+        while i < len(all_matches):
+            if i + 2 < len(all_matches) and len(all_matches[i + 1]) == 1:
+                has_new_matches = True
+                new_match = all_matches[i] + all_matches[i + 1] + all_matches[i + 2]
+                if len(new_match) >= min_length and len(new_match) <= max_length:
+                    output_file_handler.write(new_match + "\n")
+                    new_matches.append(new_match)
+                i += 3
+            else:
+                new_matches.append(all_matches[i])
+                i += 1
+
+        if not has_new_matches: return
+        output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, new_matches)
+        all_matches = new_matches
+
+
+
 def cgramify(docopt_args):
     input_file = docopt_args['<input_file>']
     output_file = docopt_args['<output_file>']
@@ -273,13 +333,16 @@ def cgramify(docopt_args):
     numeric = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
     special =      ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ']
     special_full = ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ', '\'', '-']
+    cgram_rulify = False
     # does not include ' and - because of their common use in normal language
 
     if ARGS.get('--min-length') is None:
-        min_length = 4
+        min_length = 3
     else:
         min_length = int(docopt_args.get('--min-length'))
 
+    if ARGS.get('--cgram-rulify'):
+        cgram_rulify = True
 
     if ARGS.get('--max-length') is None:
         max_length = 32
@@ -288,15 +351,13 @@ def cgramify(docopt_args):
 
     if ARGS.get('--filter') is None:
         output_filter = []
-
-    if ARGS.get('--filter-combo-length') is None:
-        output_filter = []
     else:
         if ARGS.get('--filter') is not None:
             output_filter = docopt_args.get('--filter')
             output_filter = output_filter.split(",")
             if "" in output_filter: output_filter.remove("")
 
+    if ARGS.get('--filter-combo-length') is not None:
         output_filter_count = int(docopt_args.get('--filter-combo-length'))
         all_combinations = []
         for i in range(1, output_filter_count+1):
@@ -357,6 +418,7 @@ def cgramify(docopt_args):
         last_charset = 'empty'
         character_buffer = []
         matches = []
+        all_matches = []
         for char in original_plaintext:
             is_lowercase = True if char in lowercase else False
             if not is_lowercase:
@@ -384,6 +446,8 @@ def cgramify(docopt_args):
                 last_charset = current_charset
                 continue
 
+            if len(character_buffer) > 0:
+                all_matches.append("".join(character_buffer))
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
@@ -393,24 +457,26 @@ def cgramify(docopt_args):
             last_charset = current_charset
             character_buffer = [char]
 
+        if len(character_buffer) > 0:
+            all_matches.append("".join(character_buffer))
         if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
             output_file_handler.write("".join(character_buffer) + "\n")
             matches.append("".join(character_buffer))
 
         # Output matches into filter outputs
-        output_filter_writer(output_filter, output_filter_file_handler, matches)
+        output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, matches)
+
+        # get new matches by glueing together parts that have 1-length in between
+        glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, all_matches)
 
         if ARGS.get('--mixed'):
             # Mixed case + less strict special check
             lowercased = False
             matches = []
+            all_matches = []
             character_buffer = []
             last_charset = "empty"
             for char in original_plaintext:
-                if not lowercased:
-                    char = char.lower()
-                    lowercased = True
-
                 if char in lowercase or char in uppercase:
                     current_charset = 'mixedcase'
                 elif char in numeric:
@@ -423,21 +489,30 @@ def cgramify(docopt_args):
                 if current_charset == last_charset or current_charset == 'unknown':  # treat unknown as every set
                     character_buffer.append(char)
                 else:
+                    if len(character_buffer) > 0:
+                        all_matches.append("".join(character_buffer))
                     if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                         output_file_handler.write("".join(character_buffer) + "\n")
                         matches.append("".join(character_buffer))
                     last_charset = current_charset
                     character_buffer = [char]
             
+            if len(character_buffer) > 0:
+                all_matches.append("".join(character_buffer))
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
 
 
             # Output matches into filter outputs
-            output_filter_writer(output_filter, output_filter_file_handler, matches)
+            output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, matches)
+
+            # get new matches by glueing together parts that have 1-length in between
+            glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, all_matches)
+
 
             matches = []
+            all_matches = []
             character_buffer = []
 
             # Mixed numeric case + less strict special check
@@ -452,18 +527,25 @@ def cgramify(docopt_args):
                 if current_charset == last_charset or current_charset == 'unknown':  # treat unknown as every set
                     character_buffer.append(char)
                 else:
+                    if len(character_buffer) > 0:
+                        all_matches.append("".join(character_buffer))
                     if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                         output_file_handler.write("".join(character_buffer) + "\n")
                         matches.append("".join(character_buffer))
                     last_charset = current_charset
                     character_buffer = [char]
 
+            if len(character_buffer) > 0:
+                all_matches.append("".join(character_buffer))
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
 
             # Output matches into filter outputs
-            output_filter_writer(output_filter, output_filter_file_handler, matches)
+            output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, matches)
+            
+            # get new matches by glueing together parts that have 1-length in between
+            glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, all_matches)
 
     # Close file handles
     input_file_handler.close()
@@ -504,4 +586,6 @@ if __name__ == '__main__':
         cgramify(ARGS)
     print()
     print("Don't forget to de-duplicate and sort the output.\nRecommended command:")
-    print("cat output_file.txt | sort | uniq -c | sort -rn | grep -oP '^ *[0-9]+ \\K.*' > sorted_output.txt")
+    print("cat output_file.txt | sort | uniq -c | sort -rn | grep -oAP '^ *[0-9]+ \\K.*' > sorted_output.txt")
+    print("Windows alternative:")
+    print("Get-Content output_file.txt | Group-Object | Sort-Object Count -Descending | ForEach-Object { $_.Group } | Select-Object -Unique | Set-Content sorted_output.txt")
