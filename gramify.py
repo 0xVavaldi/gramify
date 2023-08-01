@@ -3,7 +3,7 @@
 Usage:
   gramify.py word <input_file> <output_file> [--min-length=<int>] [--max-length=<int>]
   gramify.py character <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--rolling]
-  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<str>] [--cgram-rulify]
+  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<str>] [--cgram-rulify-beta]
   gramify.py (-h | --help)
   gramify.py --version
 
@@ -14,9 +14,9 @@ Options:
   --max-length=<int>            Maximum size of k,n,c-gram output.
   --rolling                     Make kgrams in one file based on length instead of into three groups of start, mid, end.
   --mixed                       Allow for mixed charset cgrams
-  --filter=<str>                Filter for specific outputs using start, mid, end. (Default uses no filter)
-  --filter-combo-length=<int>   Create automatic filter combinations of start,mid,end (startmid,startmidmidendend) based on length
-  --cgram-rulify                Convert cgram output into hashcat-rules
+  --filter=<str>                Filter for specific outputs using solo, duo, duostart, duoend, start, mid, and end. (Default uses no filter)
+  --filter-combo-length=<int>   Create automatic filter combinations of start,mid,end (startmid,startmidmidendend) based on length [BETA]
+  --cgram-rulify-beta           Convert cgram output into hashcat-rules [BETA]
 
 Gram-types:
   K-Gram (Character):           Letter based https://nlp.stanford.edu/IR-book/html/htmledition/k-gram-indexes-for-wildcard-queries-1.html
@@ -30,52 +30,20 @@ Filter:
   using --filter 'start,mid,end' will output 3 files containing the first element, the middle elements and the last element respectively (does not include solo or duo).
   using --filter 'startmid' will output 1 file containing the first and middle elements, but not the last which is perfect for -a6 hybrid attacks.
   using --filter 'midend' will output 1 file containing the middle and end elements, but not the first which is perfect for -a7 hybrid attacks.
+  You can make any combination yourself. "startmidstartmidendmidstart" for example.
+  Recommended filters to play with are listed above
 """
 import re
 import os
 import sys
 from itertools import permutations
+from tqdm import tqdm
 from docopt import docopt
 sys.setrecursionlimit(5000)
+safe_break_amount = 10000
 
 
-def output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, matches):
-    index_convert = [x for x in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
-    start_length = 0
-    if cgram_rulify:
-        if len(matches) >= 1:
-            start_length = len(matches[0])
-            # start
-            buffer = []
-            for letter in matches[0][::-1]:
-                buffer.append("^" + letter)
-            matches[0] = " ".join(buffer)
-
-        if len(matches) >= 2:
-            # end
-            buffer = []
-            for letter in matches[-1]:
-                buffer.append("$" + letter)
-            matches[-1] = " ".join(buffer)
-
-        if len(matches) >= 3:
-            # mid
-            offset = start_length
-            index = 1
-            matches_copy = matches[1:-1].copy()
-
-            for mid_part in matches_copy:
-                if offset > 35:
-                    del matches[index]
-                    continue
-                buffer = []
-                for letter in mid_part[::-1]:
-                    buffer.append("i" + index_convert[offset] + letter)
-                offset += len(mid_part)
-                matches[index] = " ".join(buffer)
-                index += 1
-
-
+def output_filter_writer(output_filter, output_filter_file_handler, matches):
     for filter_item in output_filter:
         filter_output = []
         if(filter_item == "solo" and len(matches) == 1):
@@ -99,6 +67,7 @@ def output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler
         if filter_item == "duostart": continue
         if filter_item == "duoend": continue
         if filter_item == "duo": continue
+        if filter_item == "solo": continue
 
         start = matches[0]
         mid = matches[1:-1]
@@ -128,6 +97,269 @@ def output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler
             output_filter_file_handler[filter_item].write("\n")
 
 
+def output_rule_filter_writer(output_filter, output_rule_file_handler, matches):
+    index_convert = [x for x in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    start_length = 0
+    
+    # Convert to rules
+    if len(matches) >= 1:
+        start_length = len(matches[0])
+        # start
+        buffer = []
+        for letter in matches[0][::-1]:
+            buffer.append("^" + letter)
+        matches[0] = " ".join(buffer)
+
+    if len(matches) >= 2:
+        # end
+        buffer = []
+        for letter in matches[-1]:
+            buffer.append("$" + letter)
+        matches[-1] = " ".join(buffer)
+
+    if len(matches) >= 3:
+        # mid
+        offset = start_length
+        index = 1
+        matches_copy = matches[1:-1].copy()
+
+        for mid_part in matches_copy:
+            if offset > 35:
+                del matches[index]
+                continue
+            buffer = []
+            for letter in mid_part[::-1]:
+                buffer.append("i" + index_convert[offset] + letter)
+            offset += len(mid_part)
+            matches[index] = " ".join(buffer)
+            index += 1
+
+    # Write rules
+    for filter_item in output_filter:
+        filter_output = []
+        if(filter_item == "solo" and len(matches) == 1):
+            output_rule_file_handler[filter_item].write(matches[0] + "\n")
+            continue
+
+        if len(matches) < 2: continue
+        if filter_item == "solo": continue
+
+        if len(matches) == 2:
+            if filter_item == "duostart":
+                output_rule_file_handler[filter_item].write(matches[0] + "\n")
+                continue
+            if filter_item == "duoend":
+                output_rule_file_handler[filter_item].write(matches[1] + "\n")
+                continue
+            if filter_item == "duo":
+                output_rule_file_handler[filter_item].write(matches[0] + matches[1] + "\n")
+                continue
+        if len(matches) < 3: continue
+        if filter_item == "solo": continue
+        if filter_item == "duostart": continue
+        if filter_item == "duoend": continue
+        if filter_item == "duo": continue
+
+        start = matches[0]
+        mid = matches[1:-1]
+        end = matches[-1]
+
+        _filter = filter_item
+        filter_output = []
+        while _filter != "":
+            if _filter.startswith("start"):
+                filter_output.append(start)
+                _filter = _filter[len("start"):]
+                continue
+
+            if _filter.startswith("mid"):
+                filter_output += mid
+                _filter = _filter[len("mid"):]
+                continue
+
+            if _filter.startswith("end"):
+                filter_output.append(end)
+                _filter = _filter[len("end"):]
+                continue
+
+        if "" in filter_output: filter_output.remove("")
+        if len(filter_output) > 0:
+            output_rule_file_handler[filter_item].write(" ".join(filter_output) + "\n")
+
+        if(filter_item == "mid"):
+            safe_break = 0
+            powerset = []
+            x = len(matches[1:-1])
+            for i in range(1 << x):
+                if safe_break > safe_break_amount: break
+                y = [matches[1:-1][j] for j in range(x) if (i & (1 << j))]
+                write_string = " ".join(y)
+                if len(write_string) == 0: continue
+                output_rule_file_handler[filter_item].write(write_string + "\n")
+                safe_break += 1
+
+        if(filter_item == "midend"):
+            safe_break = 0
+            powerset = []
+            x = len(matches[1:-1])
+            for i in range(1 << x):
+                if safe_break > safe_break_amount: break
+                y = [matches[1:-1][j] for j in range(x) if (i & (1 << j))]
+                write_string = " ".join(y)
+                if len(write_string) == 0: continue
+                output_rule_file_handler[filter_item].write(write_string + " " + end + "\n")
+                safe_break += 1
+
+        if(filter_item == "startmid"):
+            safe_break = 0
+            x = len(matches[1:-1])
+            for i in range(1 << x):
+                if safe_break > safe_break_amount: break
+                y = [matches[1:-1][j] for j in range(x) if (i & (1 << j))]
+                write_string = " ".join(y)
+                if len(write_string) == 0: continue
+                output_rule_file_handler[filter_item].write(start + " " + write_string + "\n")
+                safe_break += 1
+
+        if(filter_item == "startmidend"):
+            safe_break = 0
+            powerset = []
+            x = len(matches[1:-1])
+            for i in range(1 << x):
+                if safe_break > safe_break_amount: 
+                    #print("safe_break triggered on:")
+                    #print(matches)
+                    break
+                y = [matches[1:-1][j] for j in range(x) if (i & (1 << j))]
+                write_string = " ".join(y)
+                if len(write_string) == 0: continue
+                output_rule_file_handler[filter_item].write(start + " " + write_string + " " + end + "\n")
+                safe_break += 1
+
+
+def output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches):
+    index_convert = [x for x in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    start_length = 0
+    
+    # Convert to rules
+    if len(matches) >= 1:
+        start_length = len(matches[0])
+        # start
+        buffer = []
+        for letter in matches[0][::-1]:
+            buffer.append("^" + letter)
+        matches[0] = " ".join(buffer)
+
+    if len(matches) >= 2:
+        # end
+        buffer = []
+        for letter in matches[-1]:
+            buffer.append("$" + letter)
+        matches[-1] = " ".join(buffer)
+
+    if len(matches) >= 3:
+        # mid
+        offset = start_length
+        index = 1
+        matches_copy = matches[1:-1].copy()
+
+        for mid_part in matches_copy:
+            if offset > 35:
+                del matches[index]
+                continue
+            buffer = []
+            for letter in mid_part:
+                offset+= 1
+                if offset > 35:
+                    continue
+                buffer.append("o" + index_convert[offset] + letter)
+            matches[index] = " ".join(buffer)
+            index += 1
+
+    # Write rules
+    for filter_item in output_filter:
+        filter_output = []
+        if len(matches) < 3: continue
+        if filter_item == "solo": continue
+        if filter_item == "duostart": continue
+        if filter_item == "duoend": continue
+        if filter_item == "duo": continue
+
+        start = matches[0]
+        mid = matches[1:-1]
+        end = matches[-1]
+
+        _filter = filter_item
+        filter_output = []
+        has_mid = False
+        while _filter != "":
+            if _filter.startswith("start"):
+                filter_output.append(start)
+                _filter = _filter[len("start"):]
+                continue
+
+            if _filter.startswith("mid"):
+                has_mid = True
+                filter_output += mid
+                _filter = _filter[len("mid"):]
+                continue
+
+            if _filter.startswith("end"):
+                filter_output.append(end)
+                _filter = _filter[len("end"):]
+                continue
+
+        if not has_mid: continue
+        if "" in filter_output: filter_output.remove("")
+        if len(filter_output) > 0:
+            output_rule_file_handler[filter_item].write(" ".join(filter_output) + "\n")
+
+        if(filter_item == "mid"):
+            safe_break = 0
+            powerset = []
+            x = len(matches[1:-1])
+            for i in range(1 << x):
+                if safe_break > safe_break_amount: break
+                y = [matches[1:-1][j] for j in range(x) if (i & (1 << j))]
+                write_string = " ".join(y)
+                if len(write_string) == 0: continue
+                output_rule_file_handler[filter_item].write(write_string + "\n")
+                safe_break += 1
+
+        if(filter_item == "midend"):
+            safe_break = 0
+            powerset = []
+            x = len(matches[1:-1])
+            for i in range(1 << x):
+                if safe_break > safe_break_amount: break
+                y = [matches[1:-1][j] for j in range(x) if (i & (1 << j))]
+                write_string = " ".join(y)
+                if len(write_string) == 0: continue
+                output_rule_file_handler[filter_item].write(write_string + " " + end + "\n")
+                safe_break += 1
+
+        if(filter_item == "startmid"):
+            safe_break = 0
+            x = len(matches[1:-1])
+            for i in range(1 << x):
+                if safe_break > safe_break_amount: break
+                y = [matches[1:-1][j] for j in range(x) if (i & (1 << j))]
+                write_string = " ".join(y)
+                if len(write_string) == 0: continue
+                output_rule_file_handler[filter_item].write(start + " " + write_string + "\n")
+                safe_break += 1
+
+        if(filter_item == "startmidend"):
+            safe_break = 0
+            powerset = []
+            x = len(matches[1:-1])
+            for i in range(1 << x):
+                if safe_break > safe_break_amount: break
+                y = [matches[1:-1][j] for j in range(x) if (i & (1 << j))]
+                write_string = " ".join(y)
+                if len(write_string) == 0: continue
+                output_rule_file_handler[filter_item].write(start + " " + write_string + " " + end + "\n")
+                safe_break += 1
 
 def alphanum_string(stringx):
     alphanumeric = ""
@@ -302,7 +534,7 @@ def has_repeating_substrings(s):
             return True
     return False
 
-def glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, all_matches):
+def glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, output_rule_file_handler, all_matches):
     while True:
         has_new_matches = False
         new_matches = []
@@ -320,10 +552,17 @@ def glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_
                 i += 1
 
         if not has_new_matches: return
-        output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, new_matches)
+        output_filter_writer(output_filter, output_filter_file_handler, new_matches)
+        if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, new_matches)
+        if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, new_matches)
+
         all_matches = new_matches
 
-
+def blocks(files, size=65536):
+    while True:
+        b = files.read(size)
+        if not b: break
+        yield b
 
 def cgramify(docopt_args):
     input_file = docopt_args['<input_file>']
@@ -375,9 +614,6 @@ def cgramify(docopt_args):
                 combinations_output.remove(item)
         output_filter += combinations_output
 
-        
-
-
         for item in output_filter:  # using this more complex filter to allow for more complex filters in the future such as startmidstartend
             original_item = item
             if item in ["solo", "duo", "duostart", "duoend"]: continue
@@ -400,6 +636,11 @@ def cgramify(docopt_args):
                 print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, duo, duostart, duoend, start, mid, and end - or any combination of 'start, mid, or end'. (ex: startmidmidend)")
                 sys.exit()
 
+    print("Counting lines")
+    #line_count = 1345092517
+    with open(input_file, "r",encoding="utf-8",errors='ignore') as f:
+        line_count = sum(bl.count("\n") for bl in blocks(f))
+    
     input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
     output_file_handler = open("c_" + output_file, "a+", encoding="utf-8", errors="ignore")
     print("Writing output to: c_" + output_file)
@@ -409,10 +650,16 @@ def cgramify(docopt_args):
         output_filter_file_handler[item] = open("c_" + item + "_" + output_file, "a+", encoding="utf-8", errors="ignore")
         print("Writing filter output to: c_" + item + "_" + output_file)
 
+    if cgram_rulify:
+        output_rule_file_handler = {}
+        for item in output_filter:
+            output_rule_file_handler[item] = open("c_" + item + "_" + output_file + ".rule", "a+", encoding="utf-8", errors="ignore")
+            print("Writing rule output to: c_" + item + "_" + output_file + ".rule")
+
     ########################
     ### Start processing ###
     ########################
-    for line in input_file_handler:
+    for line in tqdm(input_file_handler, bar_format='{l_bar}{bar:50}{r_bar}{bar:-50b}', total=line_count, miniters=10000):
         original_plaintext = line.rstrip("\n").rstrip("\r")
         if line.startswith("$HEX["): continue  # Skip Hexified plains to prevent bias
         last_charset = 'empty'
@@ -464,10 +711,12 @@ def cgramify(docopt_args):
             matches.append("".join(character_buffer))
 
         # Output matches into filter outputs
-        output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, matches)
+        output_filter_writer(output_filter, output_filter_file_handler, matches)
+        if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, matches)
+        if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches)
 
         # get new matches by glueing together parts that have 1-length in between
-        glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, all_matches)
+        glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, output_rule_file_handler, all_matches)
 
         if ARGS.get('--mixed'):
             # Mixed case + less strict special check
@@ -503,12 +752,13 @@ def cgramify(docopt_args):
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
 
-
             # Output matches into filter outputs
-            output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, matches)
+            output_filter_writer(output_filter, output_filter_file_handler, matches)
+            if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, matches)
+            if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches)
 
             # get new matches by glueing together parts that have 1-length in between
-            glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, all_matches)
+            glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, output_rule_file_handler, all_matches)
 
 
             matches = []
@@ -542,10 +792,12 @@ def cgramify(docopt_args):
                 matches.append("".join(character_buffer))
 
             # Output matches into filter outputs
-            output_filter_writer(cgram_rulify, output_filter, output_filter_file_handler, matches)
-            
+            output_filter_writer(output_filter, output_filter_file_handler, matches)
+            if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, matches)
+            if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches)
+
             # get new matches by glueing together parts that have 1-length in between
-            glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, all_matches)
+            glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, output_rule_file_handler, all_matches)
 
     # Close file handles
     input_file_handler.close()
@@ -554,7 +806,7 @@ def cgramify(docopt_args):
         output_filter_file_handler[filter_item].close()
 
 if __name__ == '__main__':
-    ARGS = docopt(__doc__, version='2.4')
+    ARGS = docopt(__doc__, version='2.5')
     if not os.path.exists(ARGS.get('<input_file>')):
         print("Input file does not exist.")
         sys.exit()
