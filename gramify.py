@@ -40,7 +40,7 @@ from itertools import permutations
 from tqdm import tqdm
 from docopt import docopt
 sys.setrecursionlimit(5000)
-safe_break_amount = 10000000
+output_file_names = []
 
 
 def output_filter_writer(output_filter, output_filter_file_handler, matches):
@@ -187,54 +187,6 @@ def output_rule_filter_writer(output_filter, output_rule_file_handler, matches):
         if len(filter_output) > 0:
             output_rule_file_handler[filter_item].write(" ".join(filter_output) + "\n")
 
-        if(filter_item == "mid"):
-            safe_break = 0
-            powerset = []
-            x = len(matches_copy[1:-1])
-            for i in range(1 << x):
-                if safe_break > safe_break_amount: break
-                y = [matches_copy[1:-1][j] for j in range(x) if (i & (1 << j))]
-                write_string = " ".join(y)
-                if len(write_string) == 0: continue
-                output_rule_file_handler[filter_item].write(write_string + "\n")
-                safe_break += 1
-
-        if(filter_item == "midend"):
-            safe_break = 0
-            powerset = []
-            x = len(matches_copy[1:-1])
-            for i in range(1 << x):
-                if safe_break > safe_break_amount: break
-                y = [matches_copy[1:-1][j] for j in range(x) if (i & (1 << j))]
-                write_string = " ".join(y)
-                if len(write_string) == 0: continue
-                output_rule_file_handler[filter_item].write(write_string + " " + end + "\n")
-                safe_break += 1
-
-        if(filter_item == "startmid"):
-            safe_break = 0
-            x = len(matches_copy[1:-1])
-            for i in range(1 << x):
-                if safe_break > safe_break_amount: break
-                y = [matches_copy[1:-1][j] for j in range(x) if (i & (1 << j))]
-                write_string = " ".join(y)
-                if len(write_string) == 0: continue
-                output_rule_file_handler[filter_item].write(start + " " + write_string + "\n")
-                safe_break += 1
-
-        if(filter_item == "startmidend"):
-            safe_break = 0
-            powerset = []
-            x = len(matches_copy[1:-1])
-            for i in range(1 << x):
-                if safe_break > safe_break_amount:
-                    break
-                y = [matches_copy[1:-1][j] for j in range(x) if (i & (1 << j))]
-                write_string = " ".join(y)
-                if len(write_string) == 0: continue
-                output_rule_file_handler[filter_item].write(start + " " + write_string + " " + end + "\n")
-                safe_break += 1
-
 
 def output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches):
     matches_copy = matches.copy()
@@ -314,53 +266,6 @@ def output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler,
         if len(filter_output) > 0:
             output_rule_file_handler[filter_item].write(" ".join(filter_output) + "\n")
 
-        if(filter_item == "mid"):
-            safe_break = 0
-            powerset = []
-            x = len(matches_copy[1:-1])
-            for i in range(1 << x):
-                if safe_break > safe_break_amount: break
-                y = [matches_copy[1:-1][j] for j in range(x) if (i & (1 << j))]
-                write_string = " ".join(y)
-                if len(write_string) == 0: continue
-                output_rule_file_handler[filter_item].write(write_string + "\n")
-                safe_break += 1
-
-        if(filter_item == "midend"):
-            safe_break = 0
-            powerset = []
-            x = len(matches_copy[1:-1])
-            for i in range(1 << x):
-                if safe_break > safe_break_amount: break
-                y = [matches_copy[1:-1][j] for j in range(x) if (i & (1 << j))]
-                write_string = " ".join(y)
-                if len(write_string) == 0: continue
-                output_rule_file_handler[filter_item].write(write_string + " " + end + "\n")
-                safe_break += 1
-
-        if(filter_item == "startmid"):
-            safe_break = 0
-            x = len(matches_copy[1:-1])
-            for i in range(1 << x):
-                if safe_break > safe_break_amount: break
-                y = [matches_copy[1:-1][j] for j in range(x) if (i & (1 << j))]
-                write_string = " ".join(y)
-                if len(write_string) == 0: continue
-                output_rule_file_handler[filter_item].write(start + " " + write_string + "\n")
-                safe_break += 1
-
-        if(filter_item == "startmidend"):
-            safe_break = 0
-            powerset = []
-            x = len(matches_copy[1:-1])
-            for i in range(1 << x):
-                if safe_break > safe_break_amount: break
-                y = [matches_copy[1:-1][j] for j in range(x) if (i & (1 << j))]
-                write_string = " ".join(y)
-                if len(write_string) == 0: continue
-                output_rule_file_handler[filter_item].write(start + " " + write_string + " " + end + "\n")
-                safe_break += 1
-
 def alphanum_string(stringx):
     alphanumeric = ""
     for character in stringx:
@@ -383,6 +288,7 @@ def ngramify(docopt_args):
 
     input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
     output_file_handler = open("n_" + output_file, "a+", encoding="utf-8", errors="ignore")
+    output_file_names.append("n_" + output_file)
     print("Writing output to: n_" + output_file)
     data_raw = ""
     for line in input_file_handler:
@@ -432,6 +338,7 @@ def kgramify(docopt_args):
         print("Writing output to: k_rolling." + output_file)
         in_handler = open(input_file, encoding="utf-8", errors="ignore")
         out_handler = open("k_rolling."+ output_file, "a+", encoding="utf-8", errors="ignore")
+        output_file_names.append("k_rolling." + output_file)
         for line in in_handler:
             original_plaintext = line.rstrip("\n").rstrip("\r")
             for i in range(min_length, max_length+1):
@@ -467,6 +374,9 @@ def kgramify(docopt_args):
             start_file_handler.close()
             mid_file_handler.close()
             end_file_handler.close()
+        output_file_names.append("k_start." + output_file)
+        output_file_names.append("k_mid." + output_file)
+        output_file_names.append("k_end." + output_file)
 
 
 def kgramify_process(return_array, input_word, start, end, min_length, max_length):
@@ -637,24 +547,27 @@ def cgramify(docopt_args):
                 sys.exit()
 
     print("Counting lines")
-    line_count = 1345092517
-    # with open(input_file, "r",encoding="utf-8",errors='ignore') as f:
-    #     line_count = sum(bl.count("\n") for bl in blocks(f))
+    #line_count = 1345092517
+    with open(input_file, "r",encoding="utf-8",errors='ignore') as f:
+        line_count = sum(bl.count("\n") for bl in blocks(f))
     
     input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
     output_file_handler = open("c_" + output_file, "a+", encoding="utf-8", errors="ignore")
     print("Writing output to: c_" + output_file)
+    output_file_names.append("c_" + output_file)
 
     output_filter_file_handler = {}
     for item in output_filter:
         output_filter_file_handler[item] = open("c_" + item + "_" + output_file, "a+", encoding="utf-8", errors="ignore")
         print("Writing filter output to: c_" + item + "_" + output_file)
+        output_file_names.append("c_" + item + "_" + output_file)
 
     output_rule_file_handler = {}
     if cgram_rulify:
         for item in output_filter:
             output_rule_file_handler[item] = open("c_" + item + "_" + output_file + ".rule", "a+", encoding="utf-8", errors="ignore")
             print("Writing rule output to: c_" + item + "_" + output_file + ".rule")
+            output_file_names.append("c_" + item + "_" + output_file + ".rule")
 
     ########################
     ### Start processing ###
@@ -837,7 +750,7 @@ if __name__ == '__main__':
     if ARGS.get('charset'):
         cgramify(ARGS)
     print()
-    print("Don't forget to de-duplicate and sort the output.\nRecommended command:")
-    print("cat output_file.txt | sort | uniq -c | sort -rn | grep -oAP '^ *[0-9]+ \\K.*' > sorted_output.txt")
-    print("Windows alternative:")
-    print("Get-Content output_file.txt | Group-Object | Sort-Object Count -Descending | ForEach-Object { $_.Group } | Select-Object -Unique | Set-Content sorted_output.txt")
+    print("Don't forget to de-duplicate and sort the output.\nRecommended commands:")
+    for item in output_file_names:
+        print("cat \"" + item + "\" | sort | uniq -c | sort -rn | awk '($1 >= 5)' | cut -c9- > \"" + item + "\".sorted")
+
