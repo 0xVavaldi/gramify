@@ -1,7 +1,7 @@
 """n-gram generator on word, char and charset basis
 
 Usage:
-  gramify.py word <input_file> <output_file> [--min-length=<int>] [--max-length=<int>]
+  gramify.py word <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--ngram-more]
   gramify.py character <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--rolling]
   gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<str>] [--cgram-rulify-beta]
   gramify.py (-h | --help)
@@ -17,6 +17,7 @@ Options:
   --filter=<str>                Filter for specific outputs using solo, duo, duostart, duoend, start, mid, and end. (Default uses no filter)
   --filter-combo-length-beta=<int>   Create automatic filter combinations of start,mid,end (startmid,startmidmidendend) based on length [BETA]
   --cgram-rulify-beta           Convert cgram output into hashcat-rules [BETA]
+  --ngram-more                  Add extra candidates by removing casing and special characters
 
 Gram-types:
   K-Gram (Character):           Letter based https://nlp.stanford.edu/IR-book/html/htmledition/k-gram-indexes-for-wildcard-queries-1.html
@@ -276,6 +277,7 @@ def alphanum_string(stringx):
 def ngramify(docopt_args):
     input_file = docopt_args.get('<input_file>')
     output_file = docopt_args.get('<output_file>')
+    ngram_more = bool(docopt_args['--ngram-more'])
     if ARGS.get('--min-length') is None:
         min_length = 1
     else:
@@ -301,18 +303,24 @@ def ngramify(docopt_args):
     for i in range(min_length, max_length+1, 1):
         for j in range(0, len(data)-i+1, 1):
             output_set = data[j:j+i]
-            output_string = " ".join(output_set)
-            output_file_handler.write(output_string + "\n")
-
-    new_data = []
-    for word in data:
-        new_data.append(alphanum_string(word))
-    data = new_data
-
-    for i in range(min_length, max_length+1, 1):
-        for j in range(0, len(data)-i+1, 1):
-            output_set = data[j:j+i]
             output_file_handler.write(" ".join(output_set) + "\n")
+
+    if ngram_more:
+        new_data = []
+        for word in data:
+            new_data.append(alphanum_string(word))
+        data = new_data
+
+        for i in range(min_length, max_length+1, 1):
+            for j in range(0, len(data)-i+1, 1):
+                output_set = data[j:j+i]
+                output_file_handler.write(" ".join(output_set) + "\n")
+
+        for i in range(min_length, max_length+1, 1):
+            for j in range(0, len(data)-i+1, 1):
+                output_set = data[j:j+i]
+                output_file_handler.write((" ".join(output_set)).lower() + "\n")
+
     output_file_handler.close()
     input_file_handler.close()
 
