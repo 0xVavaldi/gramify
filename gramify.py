@@ -299,10 +299,9 @@ def ngramify(docopt_args):
     data = list(filter(None, data))
 
     for i in range(min_length, max_length+1, 1):
-        for j in range(0, len(data)-min_length, 1):
+        for j in range(0, len(data)-i+1, 1):
             output_set = data[j:j+i]
             output_string = " ".join(output_set)
-            # if output_string[-1] in ["?", ".", "!", ",", ";", "\"", "'"]:
             output_file_handler.write(output_string + "\n")
 
     new_data = []
@@ -311,7 +310,7 @@ def ngramify(docopt_args):
     data = new_data
 
     for i in range(min_length, max_length+1, 1):
-        for j in range(0, len(data)-min_length, 1):
+        for j in range(0, len(data)-i+1, 1):
             output_set = data[j:j+i]
             output_file_handler.write(" ".join(output_set) + "\n")
     output_file_handler.close()
