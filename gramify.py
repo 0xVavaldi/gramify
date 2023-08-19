@@ -38,9 +38,11 @@ Filter:
 import re
 import os
 import sys
+import binascii
 from itertools import permutations
 from tqdm import tqdm
 from docopt import docopt
+
 sys.setrecursionlimit(5000)
 output_file_names = []
 
@@ -582,7 +584,14 @@ def cgramify(docopt_args):
     ########################
     for line in tqdm(input_file_handler, bar_format='{l_bar}{bar:50}{r_bar}{bar:-50b}', total=line_count, miniters=10000):
         original_plaintext = line.rstrip("\r\n")
-        if line.startswith("$HEX["): continue  # Skip Hexified plains to prevent bias
+
+        # Handle $HEX[] notation
+        if line.startswith("$HEX["):
+            try:
+                line = binascii.unhexlify(line[5:-1])
+            except binascii.Error:
+                continue
+
         last_charset = 'empty'
         character_buffer = []
         matches = []
