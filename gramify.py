@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """n-gram generator on word, char and charset basis
 
 Usage:
