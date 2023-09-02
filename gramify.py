@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """n-gram generator on word, char and charset basis
 
 Usage:
@@ -37,9 +38,11 @@ Filter:
 import re
 import os
 import sys
+import binascii
 from itertools import permutations
 from tqdm import tqdm
 from docopt import docopt
+
 sys.setrecursionlimit(5000)
 output_file_names = []
 
@@ -294,7 +297,7 @@ def ngramify(docopt_args):
     print("Writing output to: n_" + output_file)
     data_raw = ""
     for line in input_file_handler:
-        data_raw += line.rstrip("\n") + " "
+        data_raw += line.rstrip("\r\n") + " "
 
 
     data = re.split(" ", data_raw)
@@ -347,7 +350,7 @@ def kgramify(docopt_args):
         out_handler = open("k_rolling."+ output_file, "a+", encoding="utf-8", errors="ignore")
         output_file_names.append("k_rolling." + output_file)
         for line in in_handler:
-            original_plaintext = line.rstrip("\n").rstrip("\r")
+            original_plaintext = line.rstrip("\r\n")
             for i in range(min_length, max_length+1):
                 for j in range(0, len(original_plaintext)+(1-i)):
                     out_handler.write(original_plaintext[j:j+i] + "\n")
@@ -366,7 +369,7 @@ def kgramify(docopt_args):
             end_file_handler = open("k_end."+ output_file, "a+", encoding="utf-8", errors="ignore")
             while line:
                 line = fp.readline()
-                original_plaintext = line.rstrip("\n").rstrip("\r")
+                original_plaintext = line.rstrip("\r\n")
                 return_array = [[],[],[]]
                 if len(original_plaintext) > 256:  # prevent recursion depth
                     continue
@@ -484,11 +487,11 @@ def blocks(files, size=65536):
 def cgramify(docopt_args):
     input_file = docopt_args['<input_file>']
     output_file = docopt_args['<output_file>']
-    lowercase = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']
-    uppercase = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
-    numeric = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-    special =      ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ']
-    special_full = ['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ', '\'', '-']
+    lowercase =    set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'])
+    uppercase =    set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'])
+    numeric =      set(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
+    special =      set(['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' '])
+    special_full = set(['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ', '\'', '-'])
     cgram_rulify = False
     # does not include ' and - because of their common use in normal language
 
@@ -580,8 +583,15 @@ def cgramify(docopt_args):
     ### Start processing ###
     ########################
     for line in tqdm(input_file_handler, bar_format='{l_bar}{bar:50}{r_bar}{bar:-50b}', total=line_count, miniters=10000):
-        original_plaintext = line.rstrip("\n").rstrip("\r")
-        if line.startswith("$HEX["): continue  # Skip Hexified plains to prevent bias
+        original_plaintext = line.rstrip("\r\n")
+
+        # Handle $HEX[] notation
+        if line.startswith("$HEX["):
+            try:
+                line = binascii.unhexlify(line[5:-1])
+            except binascii.Error:
+                continue
+
         last_charset = 'empty'
         character_buffer = []
         matches = []
