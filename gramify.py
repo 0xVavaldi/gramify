@@ -2,8 +2,8 @@
 """n-gram generator on word, char and charset basis
 
 Usage:
-  gramify.py word <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--ngram-more]
-  gramify.py character <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--rolling]
+  gramify.py word <input_file> (<output_file>|--stdout) [--min-length=<int>] [--max-length=<int>] [--ngram-more]
+  gramify.py character <input_file> (<output_file>|--stdout) [--min-length=<int>] [--max-length=<int>] [--rolling]
   gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<str>] [--cgram-rulify-beta]
   gramify.py (-h | --help)
   gramify.py --version
@@ -13,6 +13,7 @@ Options:
   --version                     Show version.
   --min-length=<int>            Minimum size of k,n,c-gram output.
   --max-length=<int>            Maximum size of k,n,c-gram output.
+  --stdout                      Print output to screen (STDOUT)
   --rolling                     Make kgrams in one file based on length instead of into three groups of start, mid, end.
   --mixed                       Allow for mixed charset cgrams
   --filter=<str>                Filter for specific outputs using solo, duo, duostart, duoend, start, mid, and end. (Default uses no filter)
@@ -281,6 +282,7 @@ def ngramify(docopt_args):
     input_file = docopt_args.get('<input_file>')
     output_file = docopt_args.get('<output_file>')
     ngram_more = bool(docopt_args['--ngram-more'])
+    use_stdout = bool(docopt_args['--stdout'])
     if ARGS.get('--min-length') is None:
         min_length = 1
     else:
@@ -292,13 +294,16 @@ def ngramify(docopt_args):
         max_length = int(docopt_args.get('--max-length'))
 
     input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
-    output_file_handler = open("n_" + output_file, "a+", encoding="utf-8", errors="ignore")
-    output_file_names.append("n_" + output_file)
-    print("Writing output to: n_" + output_file)
+    if use_stdout:
+        print("Writing output to STDOUT")
+    else:
+        output_file_handler = open("n_" + output_file, "a+", encoding="utf-8", errors="ignore")
+        output_file_names.append("n_" + output_file)
+        print("Writing output to: n_" + output_file)
+
     data_raw = ""
     for line in input_file_handler:
         data_raw += line.rstrip("\r\n") + " "
-
 
     data = re.split(" ", data_raw)
     data = list(filter(None, data))
@@ -306,7 +311,10 @@ def ngramify(docopt_args):
     for i in range(min_length, max_length+1, 1):
         for j in range(0, len(data)-i+1, 1):
             output_set = data[j:j+i]
-            output_file_handler.write(" ".join(output_set) + "\n")
+            if use_stdout:
+                print(" ".join(output_set))
+            else:
+                output_file_handler.write(" ".join(output_set) + "\n")
 
     if ngram_more:
         new_data = []
@@ -317,14 +325,20 @@ def ngramify(docopt_args):
         for i in range(min_length, max_length+1, 1):
             for j in range(0, len(data)-i+1, 1):
                 output_set = data[j:j+i]
+            if use_stdout:
                 output_file_handler.write(" ".join(output_set) + "\n")
+            else:
+                print(" ".join(output_set))
 
         for i in range(min_length, max_length+1, 1):
             for j in range(0, len(data)-i+1, 1):
                 output_set = data[j:j+i]
-                output_file_handler.write((" ".join(output_set)).lower() + "\n")
+            if use_stdout:
+                output_file_handler.write(" ".join(output_set).lower() + "\n")
+            else:
+                print(" ".join(output_set).lower())
 
-    output_file_handler.close()
+    if not use_stdout: output_file_handler.close()
     input_file_handler.close()
 
 
@@ -332,6 +346,7 @@ def kgramify(docopt_args):
     input_file = docopt_args['<input_file>']
     output_file = docopt_args['<output_file>']
     rolling = bool(docopt_args['--rolling'])
+    use_stdout = bool(docopt_args['--stdout'])
 
     if ARGS.get('--min-length') is None:
         min_length = 3
@@ -345,20 +360,30 @@ def kgramify(docopt_args):
         max_length = int(docopt_args.get('--max-length'))
 
     if rolling:
-        print("Writing output to: k_rolling." + output_file)
+        if not use_stdout: print("Writing output to: k_rolling." + output_file)
         in_handler = open(input_file, encoding="utf-8", errors="ignore")
-        out_handler = open("k_rolling."+ output_file, "a+", encoding="utf-8", errors="ignore")
-        output_file_names.append("k_rolling." + output_file)
+
+        if not use_stdout:
+            out_handler = open("k_rolling."+ output_file, "a+", encoding="utf-8", errors="ignore")
+            output_file_names.append("k_rolling." + output_file)
+
         for line in in_handler:
             original_plaintext = line.rstrip("\r\n")
             for i in range(min_length, max_length+1):
                 for j in range(0, len(original_plaintext)+(1-i)):
-                    out_handler.write(original_plaintext[j:j+i] + "\n")
+                    if use_stdout:
+                        print(original_plaintext[j:j+i])
+                    else:
+                        out_handler.write(original_plaintext[j:j+i] + "\n")
 
         in_handler.close()
-        out_handler.close()
+        if not use_stdout: out_handler.close()
 
     else:
+        if use_stdout:
+            print("Cannot use --stdout without --rolling")
+            sys.exit(-1)
+
         print("Writing output to: k_start." + output_file)
         print("Writing output to: k_mid." + output_file)
         print("Writing output to: k_end." + output_file)
@@ -557,7 +582,6 @@ def cgramify(docopt_args):
                 sys.exit()
 
     print("Counting lines")
-    #line_count = 1345092517
     with open(input_file, "r",encoding="utf-8",errors='ignore') as f:
         line_count = sum(bl.count("\n") for bl in blocks(f))
     
