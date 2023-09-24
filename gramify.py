@@ -294,9 +294,7 @@ def ngramify(docopt_args):
         max_length = int(docopt_args.get('--max-length'))
 
     input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
-    if use_stdout:
-        print("Writing output to STDOUT")
-    else:
+    if not use_stdout:
         output_file_handler = open("n_" + output_file, "a+", encoding="utf-8", errors="ignore")
         output_file_names.append("n_" + output_file)
         print("Writing output to: n_" + output_file)
