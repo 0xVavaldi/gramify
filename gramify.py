@@ -791,5 +791,5 @@ if __name__ == '__main__':
     print()
     print("Don't forget to de-duplicate and sort the output.\nRecommended commands:")
     for item in output_file_names:
-        print("cat \"" + item + "\" | sort | uniq -c | sort -rn | awk '($1 >= 5)' | awk '{if ($1 >=1) {$1=""; print substr($0, index($0, $2))}}' > \"" + item + ".sorted\"")
+        print("cat \"" + item + "\" | sort | uniq -c | sort -rn | awk '($1 >= 5)' | awk '{if ($1 >=1) {$1=\"\"; print substr($0, index($0, $2))}}' > \"" + item + ".sorted\"")
 
