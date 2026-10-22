@@ -17,7 +17,7 @@ Options:
   --rolling                     Make kgrams in one file based on length instead of into three groups of start, mid, end.
   --mixed                       Allow for mixed charset cgrams
   --filter=<str>                Filter for specific outputs using solo, duo, duostart, duoend, start, mid, and end. (Default uses no filter)
-  --filter-combo-length-beta=<int>   Create automatic filter combinations of start,mid,end (startmid,startmidmidendend) based on length [BETA]
+  --filter-combo-length=<int>   Create automatic filter combinations of start,mid,end (startmid,startmidmidendend) based on length [BETA]
   --cgram-rulify-beta           Convert cgram output into hashcat-rules [BETA]
   --ngram-more                  Add extra candidates by removing casing and special characters
 
@@ -226,10 +226,10 @@ def output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler,
                 continue
             buffer = []
             for letter in mid_part:
-                offset+= 1
                 if offset > 35:
                     continue
                 buffer.append("o" + index_convert[offset] + letter)
+                offset+= 1
             matches_copy[index] = " ".join(buffer)
             index += 1
 
@@ -271,6 +271,16 @@ def output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler,
         if len(filter_output) > 0:
             output_rule_file_handler[filter_item].write(" ".join(filter_output) + "\n")
 
+def decode_hex(plaintext):
+    """Decode hashcat's $HEX[] notation. Anything that is not valid hex is used as-is, like hashcat does."""
+    if plaintext.startswith("$HEX[") and plaintext.endswith("]"):
+        try:
+            return binascii.unhexlify(plaintext[5:-1]).decode("utf-8", errors="ignore")
+        except (binascii.Error, ValueError):
+            pass
+    return plaintext
+
+
 def alphanum_string(stringx):
     alphanumeric = ""
     for character in stringx:
@@ -301,7 +311,7 @@ def ngramify(docopt_args):
 
     data_raw = ""
     for line in input_file_handler:
-        data_raw += line.rstrip("\r\n") + " "
+        data_raw += decode_hex(line.rstrip("\r\n")) + " "
 
     data = re.split(" ", data_raw)
     data = list(filter(None, data))
@@ -317,24 +327,25 @@ def ngramify(docopt_args):
     if ngram_more:
         new_data = []
         for word in data:
-            new_data.append(alphanum_string(word))
+            if alphanum_string(word):
+                new_data.append(alphanum_string(word))
         data = new_data
 
         for i in range(min_length, max_length+1, 1):
             for j in range(0, len(data)-i+1, 1):
                 output_set = data[j:j+i]
-            if use_stdout:
-                output_file_handler.write(" ".join(output_set) + "\n")
-            else:
-                print(" ".join(output_set))
+                if use_stdout:
+                    print(" ".join(output_set))
+                else:
+                    output_file_handler.write(" ".join(output_set) + "\n")
 
         for i in range(min_length, max_length+1, 1):
             for j in range(0, len(data)-i+1, 1):
                 output_set = data[j:j+i]
-            if use_stdout:
-                output_file_handler.write(" ".join(output_set).lower() + "\n")
-            else:
-                print(" ".join(output_set).lower())
+                if use_stdout:
+                    print(" ".join(output_set).lower())
+                else:
+                    output_file_handler.write(" ".join(output_set).lower() + "\n")
 
     if not use_stdout: output_file_handler.close()
     input_file_handler.close()
@@ -366,7 +377,7 @@ def kgramify(docopt_args):
             output_file_names.append("k_rolling." + output_file)
 
         for line in in_handler:
-            original_plaintext = line.rstrip("\r\n")
+            original_plaintext = decode_hex(line.rstrip("\r\n"))
             for i in range(min_length, max_length+1):
                 for j in range(0, len(original_plaintext)+(1-i)):
                     if use_stdout:
@@ -392,7 +403,7 @@ def kgramify(docopt_args):
             end_file_handler = open("k_end."+ output_file, "a+", encoding="utf-8", errors="ignore")
             while line:
                 line = fp.readline()
-                original_plaintext = line.rstrip("\r\n")
+                original_plaintext = decode_hex(line.rstrip("\r\n"))
                 return_array = [[],[],[]]
                 if len(original_plaintext) > 256:  # prevent recursion depth
                     continue
@@ -488,16 +499,17 @@ def glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_
                 new_match = all_matches[i] + all_matches[i + 1] + all_matches[i + 2]
                 if len(new_match) >= min_length and len(new_match) <= max_length:
                     output_file_handler.write(new_match + "\n")
-                    new_matches.append(new_match)
+                new_matches.append(new_match)
                 i += 3
             else:
                 new_matches.append(all_matches[i])
                 i += 1
 
         if not has_new_matches: return
-        output_filter_writer(output_filter, output_filter_file_handler, new_matches)
-        if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, new_matches)
-        if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, new_matches)
+        in_range_matches = [match for match in new_matches if min_length <= len(match) <= max_length]
+        output_filter_writer(output_filter, output_filter_file_handler, in_range_matches)
+        if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, in_range_matches)
+        if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, in_range_matches)
 
         all_matches = new_matches
 
@@ -513,8 +525,8 @@ def cgramify(docopt_args):
     lowercase =    set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'])
     uppercase =    set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'])
     numeric =      set(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
-    special =      set(['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' '])
-    special_full = set(['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ', '\'', '-'])
+    special =      set(['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ', ':', '='])
+    special_full = set(['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ', ':', '=', '\'', '-'])
     cgram_rulify = False
     # does not include ' and - because of their common use in normal language
 
@@ -539,7 +551,7 @@ def cgramify(docopt_args):
             output_filter = output_filter.split(",")
             if "" in output_filter: output_filter.remove("")
 
-    if ARGS.get('--filter-combo-length-beta') is not None:
+    if ARGS.get('--filter-combo-length') is not None:
         output_filter_count = int(docopt_args.get('--filter-combo-length'))
         all_combinations = []
         for i in range(1, output_filter_count+1):
@@ -557,27 +569,28 @@ def cgramify(docopt_args):
                 combinations_output.remove(item)
         output_filter += combinations_output
 
-        for item in output_filter:  # using this more complex filter to allow for more complex filters in the future such as startmidstartend
-            original_item = item
-            if item in ["solo", "duo", "duostart", "duoend"]: continue
-            while(len(item) > 0):
-                match = False
-                if item.startswith("start"):
-                    match = True
-                    item = item[len("start"):]
-                if item.startswith("mid"):
-                    if(min_length != 1):
-                        print("Warning: You are using a filter with 'mid'. It is highly advised to set --min-length to 1 for this.")
-                    match =  True
-                    item = item[len("mid"):]
-                if item.startswith("end"):
-                    match =  True
-                    item = item[len("end"):]
-                if not match:
-                    break
-            if(len(item) > 0):
-                print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, duo, duostart, duoend, start, mid, and end - or any combination of 'start, mid, or end'. (ex: startmidmidend)")
-                sys.exit()
+    output_filter = list(dict.fromkeys(output_filter))  # a combo can repeat a --filter value
+    for item in output_filter:  # using this more complex filter to allow for more complex filters in the future such as startmidstartend
+        original_item = item
+        if item in ["solo", "duo", "duostart", "duoend"]: continue
+        while(len(item) > 0):
+            match = False
+            if item.startswith("start"):
+                match = True
+                item = item[len("start"):]
+            if item.startswith("mid"):
+                if(min_length != 1):
+                    print("Warning: You are using a filter with 'mid'. It is highly advised to set --min-length to 1 for this.")
+                match =  True
+                item = item[len("mid"):]
+            if item.startswith("end"):
+                match =  True
+                item = item[len("end"):]
+            if not match:
+                break
+        if(len(item) > 0):
+            print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, duo, duostart, duoend, start, mid, and end - or any combination of 'start, mid, or end'. (ex: startmidmidend)")
+            sys.exit(1)
 
     print("Counting lines")
     with open(input_file, "r",encoding="utf-8",errors='ignore') as f:
@@ -605,14 +618,7 @@ def cgramify(docopt_args):
     ### Start processing ###
     ########################
     for line in tqdm(input_file_handler, bar_format='{l_bar}{bar:50}{r_bar}{bar:-50b}', total=line_count, miniters=10000):
-        original_plaintext = line.rstrip("\r\n")
-
-        # Handle $HEX[] notation
-        if line.startswith("$HEX["):
-            try:
-                line = binascii.unhexlify(line[5:-1])
-            except binascii.Error:
-                continue
+        original_plaintext = decode_hex(line.rstrip("\r\n"))
 
         last_charset = 'empty'
         character_buffer = []
@@ -650,8 +656,8 @@ def cgramify(docopt_args):
             if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
                 output_file_handler.write("".join(character_buffer) + "\n")
                 matches.append("".join(character_buffer))
-                if(current_charset == 'lowercase' or current_charset == 'uppercase'):
-                    current_charset = 'mixedcase'
+            if(current_charset == 'lowercase' or current_charset == 'uppercase'):
+                current_charset = 'mixedcase'
 
             last_charset = current_charset
             character_buffer = [char]
@@ -716,6 +722,7 @@ def cgramify(docopt_args):
             matches = []
             all_matches = []
             character_buffer = []
+            last_charset = "empty"
 
             # Mixed numeric case + less strict special check
             for char in original_plaintext:
@@ -756,6 +763,8 @@ def cgramify(docopt_args):
     output_file_handler.close()
     for filter_item in output_filter:
         output_filter_file_handler[filter_item].close()
+    for filter_item in output_rule_file_handler:
+        output_rule_file_handler[filter_item].close()
 
 if __name__ == '__main__':
     ARGS = docopt(__doc__, version='2.5')
