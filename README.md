@@ -8,13 +8,22 @@ Gramify offers three types of n-gram analysis
 
 These each perform n-grams at their respective levels.
 
+## STDIN and STDOUT
+Use `-` as `<input_file>` to read from STDIN, and `--stdout` instead of `<output_file>` to print the grams. Status messages go to STDERR, so only grams reach the pipe. `--stdout` works for every mode that writes a single file: word, character with `--rolling`, and charset without `--filter`.
+
+The output contains duplicates; what to do with them is up to you, for example:
+```
+cat wordlist.txt | python3 gramify.py character - --stdout --rolling | sort | uniq -c | sort -rn | awk '$1 >= 5' | sed -E 's/^ *[0-9]+ //' > kgrams.txt
+python3 gramify.py charset hashmob.found --stdout --min-length=4 | sort -u | hashcat -m0 hashes.txt -r best64.rule
+```
+
 ## What is an n-gram?
 Those unfamiliar with the term will most easily understand it as the n words that follow each other naturally. At a word level the sentence: "I am writing a program" can be split at 2-gram level into: `["I am", "am writing", "writing a", "a program"]`. at 3-gram level into: `["I am writing", "am writing a", "writing a program"]`. This can also be done at a character level for example with "abc defg" into the 3-gram `["abc", "bc ", "c d", " de", "def", "efg"]`. Logically you can imagine that using this on books, or song lyrics can turn into a powerful analytical form where you can extract quotes or find words commonly used together such as the words: "I am", "He is" instead of: "capricorn icecream".
 
 ## Word n-grams
 The options offered by the gramify as of version 0.8 are as follows:
 
-```gramify.py word <input_file> <output_file> [--min-length=<int>] [--max-length=<int>]```
+```gramify.py word <input_file> (<output_file>|--stdout) [--min-length=<int>] [--max-length=<int>]```
 --min-length refers to the minimum amount of words that ngrams should be. Ergo. at least `<int>` words (Default: 1)
 --max-length refers to the maximum amount of words that ngrams should be. Ergo. at least `<int>` words (Default: 10)
 
@@ -49,7 +58,7 @@ hashcat -a1 -m0 <hashlist> <output_file> <output_file> -j"$ "
 ## Character n-grams (k-grams)
 The options offered by the gramify as of version 0.8 are as follows:
 
-```gramify.py character <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--rolling]```
+```gramify.py character <input_file> (<output_file>|--stdout) [--min-length=<int>] [--max-length=<int>] [--rolling]```
 --min-length refers to the minimum amount of characters that ngrams should be. Ergo. at least `<int>` characters (Default: 4)
 --max-length refers to the maximum amount of characters that ngrams should be. Ergo. at least `<int>` characters (Default: 8, or 32 if rolling)
 --rolling explained later
@@ -90,7 +99,7 @@ hashcat -a1 -m0 <hashlist> end_<output_file> mid_<output_file>
 Read more: https://nlp.stanford.edu/IR-book/html/htmledition/k-gram-indexes-for-wildcard-queries-1.html
 
 ## Charset n-grams
-`gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed]`
+`gramify.py charset <input_file> (<output_file>|--stdout) [--min-length=<int>] [--max-length=<int>] [--mixed]`
 
 --min-length refers to the minimum amount of characters that each word should have. Ergo. at least `<int>` characters (Default: 4)
 --max-length refers to the maximum amount of characters that each word should have. Ergo. at least `<int>` characters (Default: 32)
