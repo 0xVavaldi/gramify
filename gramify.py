@@ -1,795 +1,761 @@
 #!/usr/bin/env python3
-"""n-gram generator on word, char and charset basis
+"""gramify - n-gram generator on word, character and charset basis
+
+Splits every line of a wordlist or text into words (n-grams), characters (k-grams) or charset
+parts (c-grams), to build wordlists, rules and hybrid-attack input from cracked passwords,
+quotes or lyrics.
 
 Usage:
-  gramify.py word <input_file> (<output_file>|--stdout) [--min-length=<int>] [--max-length=<int>] [--ngram-more]
-  gramify.py character <input_file> (<output_file>|--stdout) [--min-length=<int>] [--max-length=<int>] [--rolling]
-  gramify.py charset <input_file> <output_file> [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<str>] [--cgram-rulify-beta]
+  gramify.py word <input_file> (<output_file> | --stdout) [--min-length=<int>] [--max-length=<int>] [--ngram-more] [--per-line] [--count] [--min-count=<int>] [--append] [--quiet]
+  gramify.py character <input_file> (<output_file> | --stdout) [--min-length=<int>] [--max-length=<int>] [--rolling] [--count] [--min-count=<int>] [--append] [--quiet]
+  gramify.py charset <input_file> (<output_file> | --stdout) [--min-length=<int>] [--max-length=<int>] [--mixed] [--filter=<str>] [--filter-combo-length=<int>] [--cgram-rulify-beta] [--count] [--min-count=<int>] [--append] [--quiet]
   gramify.py (-h | --help)
   gramify.py --version
 
-Options:
+Arguments:
+  <input_file>                  File to read, one entry per line. Use - to read from STDIN.
+                                Lines in $HEX[...] notation are decoded first.
+  <output_file>                 Base name for the output files. Each mode adds a prefix to the file
+                                name (see Output files), so out/list.txt becomes out/n_list.txt.
+
+Common options:
+  --min-length=<int>            Shortest gram: in words for word mode, in characters otherwise.
+                                Defaults: word 1, character 3, charset 3.
+  --max-length=<int>            Longest gram. Defaults: word 10, character 8 (32 with rolling),
+                                charset 32.
+  --stdout                      Print to STDOUT instead of writing files. Not possible when a mode
+                                writes several files: character without rolling, charset with filters.
+  --count                       De-duplicate in memory and sort each output by frequency, most
+                                common first. Needs enough RAM to hold every unique gram.
+  --min-count=<int>             Drop grams seen fewer than <int> times. Implies --count.
+  --append                      Add to existing output files. By default they are overwritten.
+                                Cannot be combined with --count.
+  --quiet                       No progress bar or status messages (these go to STDERR).
   -h --help                     Show this screen.
   --version                     Show version.
-  --min-length=<int>            Minimum size of k,n,c-gram output.
-  --max-length=<int>            Maximum size of k,n,c-gram output.
-  --stdout                      Print output to screen (STDOUT)
-  --rolling                     Make kgrams in one file based on length instead of into three groups of start, mid, end.
-  --mixed                       Allow for mixed charset cgrams
-  --filter=<str>                Filter for specific outputs using solo, duo, duostart, duoend, start, mid, and end. (Default uses no filter)
-  --filter-combo-length-beta=<int>   Create automatic filter combinations of start,mid,end (startmid,startmidmidendend) based on length [BETA]
-  --cgram-rulify-beta           Convert cgram output into hashcat-rules [BETA]
-  --ngram-more                  Add extra candidates by removing casing and special characters
+
+Word options:
+  --ngram-more                  Also output each n-gram with special characters removed from the
+                                words, plus a lowercase copy of that.
+  --per-line                    Do not build n-grams across line boundaries. Use it for passphrase
+                                lists; leave it off for running text such as books or lyrics.
+
+Character options:
+  --rolling                     Write every substring to one file instead of separate start, mid
+                                and end files.
+
+Charset options:
+  --mixed                       Two extra passes: one that keeps upper and lowercase together, and
+                                one that also keeps digits with the letters. In these passes the
+                                characters ' and - do not split parts either.
+  --filter=<str>                Comma separated filters, see Filters below. Each filter is written
+                                to c_<filter>_<output_file>.
+  --filter-combo-length=<int>   [BETA] Add every combination of start, mid and end of up to <int>
+                                parts as a filter. Repeats such as startstart are skipped.
+  --cgram-rulify-beta           [BETA] Also write each filter as hashcat rules, to
+                                c_<filter>_<output_file>.rule. Rules that do not fit hashcat's limits
+                                (31 functions, 255 characters, positions up to Z) are skipped.
+
+Output files:
+  word                          n_<output_file>: every run of min-length to max-length words.
+  character                     k_start.<output_file>: prefixes of min-length to max-length characters.
+                                k_mid.<output_file>: every substring of exactly max-length characters
+                                (only for lines longer than max-length).
+                                k_end.<output_file>: suffixes of min-length to max-length characters.
+                                Prefixes and suffixes never contain the whole line, and lines of
+                                min-length characters or fewer produce nothing.
+  character with rolling        k_rolling.<output_file>: every substring of min-length to max-length.
+  charset                       c_<output_file>, plus c_<filter>_<output_file> per filter and, with
+                                rulify, c_<filter>_<output_file>.rule.
+  Without --count the output contains duplicates. Grams with control characters (or starting
+  with $HEX[) are written in $HEX[...] notation.
+
+Filters:
+  A password split into parts [first, ..., last] has a start (first part), mid (all parts in
+  between, joined) and end (last part). Combine them in any order: startmid, midend, startend, ...
+  These position filters only match passwords with 3 or more parts; use the duo filters for 2.
+  solo                          passwords with exactly 1 part.
+  duo, duostart, duoend         passwords with exactly 2 parts: both, the first, the second.
+  start, mid, end               the first part, the middle parts, the last part.
+  startmid                      everything but the last part, perfect for hashcat -a6.
+  midend                        everything but the first part, perfect for hashcat -a7.
+  Parts are the cgrams that pass the length limits, so use --min-length=1 when filtering on mid.
 
 Gram-types:
   K-Gram (Character):           Letter based https://nlp.stanford.edu/IR-book/html/htmledition/k-gram-indexes-for-wildcard-queries-1.html
   N-Gram (Word):                Word based https://en.wikipedia.org/wiki/N-gram
-  C-Gram (Charset):             Charset boundry inspired by https://github.com/hops/pack2/blob/master/src/cgrams.rs
+  C-Gram (Charset):             Charset boundary inspired by https://github.com/hops/pack2/blob/master/src/cgrams.rs
 
-Filter:
-  Format filter using a comma separated string of combinations of start, mid, and end.
-  using --filter 'solo' will output 1 file containing all passwords with exclusively 1 element.
-  using --filter 'duo,duostart,duoend' will output 3 files containing all passwords with exclusively 2 element.
-  using --filter 'start,mid,end' will output 3 files containing the first element, the middle elements and the last element respectively (does not include solo or duo).
-  using --filter 'startmid' will output 1 file containing the first and middle elements, but not the last which is perfect for -a6 hybrid attacks.
-  using --filter 'midend' will output 1 file containing the middle and end elements, but not the first which is perfect for -a7 hybrid attacks.
-  You can make any combination yourself. "startmidstartmidendmidstart" for example.
-  Recommended filters to play with are listed above
+Examples:
+  gramify.py character found.txt grams.txt --rolling --min-count=5
+  gramify.py charset found.txt parts.txt --min-length=1 --filter=start,mid,end,startmid,midend
+  gramify.py word lyrics.txt phrases.txt --max-length=6 --count
+  cat found.txt | gramify.py character - --stdout --rolling | sort | uniq -c | sort -rn
 """
-import re
+import errno
 import os
+import re
 import sys
-import binascii
-from itertools import permutations
-from tqdm import tqdm
+from collections import Counter
+from itertools import product
+
 from docopt import docopt
 
-sys.setrecursionlimit(5000)
-output_file_names = []
+VERSION = "2.5"
+
+# Hashcat rule limits (include/rp.h): positions are 0-9A-Z, a rule holds at most
+# 31 functions (RULES_MAX - 1) and 255 characters (RP_RULE_SIZE - 1).
+RULE_POSITIONS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+RULE_MAX_FUNCTIONS = 31
+RULE_MAX_LENGTH = 255
+
+LOWERCASE = frozenset("abcdefghijklmnopqrstuvwxyz")
+UPPERCASE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+NUMERIC = frozenset("0123456789")
+# does not include ' and - because of their common use in normal language
+SPECIAL = frozenset("!\"#$%&()*+,./:;<=>?@[\\]^_`{|}~ ")
+SPECIAL_FULL = SPECIAL | frozenset("'-")
+
+UNKNOWN = "unknown"  # characters outside every set join whatever run they are in
+LOWER = "lowercase"
+UPPER = "uppercase"
+WORD_START = "wordstart"  # first letter of a run; the next letter decides upper or lower
+
+STRICT_CLASSES = {}
+STRICT_CLASSES.update(dict.fromkeys(LOWERCASE, LOWER))
+STRICT_CLASSES.update(dict.fromkeys(UPPERCASE, UPPER))
+STRICT_CLASSES.update(dict.fromkeys(NUMERIC, "numeric"))
+STRICT_CLASSES.update(dict.fromkeys(SPECIAL_FULL, "special"))  # use special full on the most strict pass
+
+MIXED_CLASSES = {}
+MIXED_CLASSES.update(dict.fromkeys(LOWERCASE | UPPERCASE, "mixedcase"))
+MIXED_CLASSES.update(dict.fromkeys(NUMERIC, "numeric"))
+MIXED_CLASSES.update(dict.fromkeys(SPECIAL, "special"))
+
+MIXED_NUMERIC_CLASSES = {}
+MIXED_NUMERIC_CLASSES.update(dict.fromkeys(LOWERCASE | UPPERCASE | NUMERIC, "mixedcasenumeric"))
+MIXED_NUMERIC_CLASSES.update(dict.fromkeys(SPECIAL, "special"))
+
+SHAPE_FILTERS = ("solo", "duo", "duostart", "duoend")
+POSITION_TOKENS = ("start", "mid", "end")
+
+_NEEDS_HEX = re.compile(r"[\x00-\x1f\x7f]")
+_HEX_DIGITS = re.compile(rb"(?:[0-9a-fA-F]{2})*")
 
 
-def output_filter_writer(output_filter, output_filter_file_handler, matches):
-    for filter_item in output_filter:
-        filter_output = []
-        if(filter_item == "solo" and len(matches) == 1):
-            output_filter_file_handler[filter_item].write(matches[0] + "\n")
+class UsageError(Exception):
+    pass
+
+
+def info(message):
+    if not QUIET:
+        print(message, file=sys.stderr)
+
+
+def error_message(message):
+    # With no STDERR at all, print() would fall back to STDOUT and end up between the grams
+    if sys.stderr is not None:
+        print(message, file=sys.stderr)
+
+
+def needs_hex(text):
+    return text.startswith("$HEX[") or _NEEDS_HEX.search(text) is not None
+
+
+def line_is_clean(line):
+    """True when no substring of line needs $HEX[] notation."""
+    return "$HEX[" not in line and _NEEDS_HEX.search(line) is None
+
+
+def to_output(gram):
+    if needs_hex(gram):
+        return "$HEX[" + gram.encode("utf-8", "surrogateescape").hex() + "]"
+    return gram
+
+
+def decode_line(raw):
+    line = raw.rstrip(b"\r\n")
+    # Anything that is not valid hex is used as-is, like hashcat does
+    if line.startswith(b"$HEX[") and line.endswith(b"]") and _HEX_DIGITS.fullmatch(line, 5, len(line) - 1):
+        line = bytes.fromhex(line[5:-1].decode("ascii"))
+    # surrogateescape keeps bytes that are not valid UTF-8 so they are written back unchanged
+    return line.decode("utf-8", "surrogateescape")
+
+
+def read_lines(input_file):
+    is_stdin = input_file == "-"
+    if is_stdin:
+        handle, total = sys.stdin.buffer, None
+    else:
+        # Pipes such as <(zcat list.gz) have no size, so the progress bar gets no total
+        handle = open(input_file, "rb")
+        total = os.path.getsize(input_file) if os.path.isfile(input_file) else None
+
+    bar = None
+    if not QUIET:
+        try:
+            from tqdm import tqdm  # optional, and slow to import, so only loaded when shown
+            bar = tqdm(total=total, unit="B", unit_scale=True, unit_divisor=1024, file=sys.stderr,
+                       bar_format="{l_bar}{bar:50}{r_bar}{bar:-50b}")
+        except ImportError:
+            pass
+    pending = 0
+    try:
+        for raw in handle:
+            if bar is not None:
+                pending += len(raw)
+                if pending >= 1 << 20:
+                    bar.update(pending)
+                    pending = 0
+            yield decode_line(raw)
+    finally:
+        if bar is not None:
+            bar.update(pending)
+            bar.close()
+        if not is_stdin:
+            handle.close()
+
+
+class GramWriter:
+    """Writes grams to a file or STDOUT, or counts them when --count is used."""
+
+    def __init__(self, path, settings, buffer_size):
+        self.path = path
+        self.min_count = settings["min_count"]
+        self.counter = Counter() if settings["count"] else None
+        if path is None:
+            self.handle = sys.stdout.buffer
+        else:
+            self.handle = open(path, "ab" if settings["append"] else "wb", buffering=buffer_size)
+
+    def add(self, grams, clean=False):
+        """clean=True promises that no gram needs $HEX[] notation."""
+        if not grams:
+            return
+        if self.counter is not None:
+            self.counter.update(grams)
+            return
+        if not clean:
+            grams = [to_output(gram) for gram in grams]
+        self._write(grams)
+
+    def _write(self, grams):
+        try:
+            self.handle.write(("\n".join(grams) + "\n").encode("utf-8", "surrogateescape"))
+        except OSError as error:
+            # Windows reports a closed pipe (e.g. "| head") as EINVAL instead of EPIPE
+            if self.path is None and error.errno == errno.EINVAL:
+                raise BrokenPipeError(errno.EPIPE, "Broken pipe") from None
+            raise
+
+    def close(self):
+        if self.counter is not None:
+            grams = [to_output(gram) for gram, count in self.counter.most_common() if count >= self.min_count]
+            self.counter = None
+            if grams:
+                self._write(grams)
+        if self.path is not None:
+            self.handle.close()
+            return
+        try:
+            self.handle.flush()
+        except OSError as error:
+            if error.errno == errno.EINVAL:
+                raise BrokenPipeError(errno.EPIPE, "Broken pipe") from None
+            raise
+
+
+def output_path(output_file, prefix):
+    """Prefix the file name, not the directory: out/list.txt -> out/<prefix>list.txt"""
+    directory, name = os.path.split(output_file)
+    return os.path.join(directory, prefix + name)
+
+
+def planned_outputs(settings):
+    """Every file this run writes, so they can be checked before any of them is opened."""
+    output_file = settings["output_file"]
+    if output_file is None:
+        return []
+    if settings["mode"] == "word":
+        prefixes = ["n_"]
+    elif settings["mode"] == "character":
+        prefixes = ["k_rolling."] if settings["rolling"] else ["k_start.", "k_mid.", "k_end."]
+    else:
+        prefixes = ["c_"] + ["c_" + item + "_" for item, _ in settings["filters"]]
+    paths = [output_path(output_file, prefix) for prefix in prefixes]
+    if settings["rulify"]:
+        paths += [output_path(output_file + ".rule", "c_" + item + "_") for item, _ in settings["filters"]]
+    return paths
+
+
+def check_outputs(settings):
+    if settings["output_file"] is not None and not os.path.basename(settings["output_file"]):
+        raise UsageError("<output_file> should be a file name, not a directory: " + settings["output_file"])
+    for path in planned_outputs(settings):
+        if not os.path.exists(path):
             continue
-
-        if len(matches) < 2: continue
-        if filter_item == "solo": continue
-
-        if len(matches) == 2:
-            if filter_item == "duostart":
-                output_filter_file_handler[filter_item].write(matches[0] + "\n")
-                continue
-            if filter_item == "duoend":
-                output_filter_file_handler[filter_item].write(matches[1] + "\n")
-                continue
-            if filter_item == "duo":
-                output_filter_file_handler[filter_item].write(matches[0] + matches[1] + "\n")
-                continue
-        if len(matches) < 3: continue
-        if filter_item == "duostart": continue
-        if filter_item == "duoend": continue
-        if filter_item == "duo": continue
-        if filter_item == "solo": continue
-
-        start = matches[0]
-        mid = matches[1:-1]
-        end = matches[-1]
-
-        _filter = filter_item
-        filter_output = []
-        while _filter != "":
-            if _filter.startswith("start"):
-                filter_output.append(start)
-                _filter = _filter[len("start"):]
-                continue
-
-            if _filter.startswith("mid"):
-                filter_output += mid
-                _filter = _filter[len("mid"):]
-                continue
-
-            if _filter.startswith("end"):
-                filter_output.append(end)
-                _filter = _filter[len("end"):]
-                continue
-
-        for item in filter_output:
-            output_filter_file_handler[filter_item].write(item)
-        if len(filter_output) > 0:
-            output_filter_file_handler[filter_item].write("\n")
+        if settings["input_file"] == "-":
+            same = sys.stdin is not None and os.path.samestat(os.fstat(sys.stdin.fileno()), os.stat(path))
+        else:
+            same = os.path.samefile(path, settings["input_file"])
+        if same:
+            raise UsageError("Output file " + path + " is the input file; choose another <output_file>.")
 
 
-def output_rule_filter_writer(output_filter, output_rule_file_handler, matches):
-    matches_copy = matches.copy()
-    index_convert = [x for x in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
-    start_length = 0
-    
-    # Convert to rules
-    if len(matches_copy) >= 1:
-        start_length = len(matches_copy[0])
-        # start
-        buffer = []
-        for letter in matches_copy[0][::-1]:
-            buffer.append("^" + letter)
-        matches_copy[0] = " ".join(buffer)
-
-    if len(matches_copy) >= 2:
-        # end
-        buffer = []
-        for letter in matches_copy[-1]:
-            buffer.append("$" + letter)
-        matches_copy[-1] = " ".join(buffer)
-
-    if len(matches_copy) >= 3:
-        # mid
-        offset = start_length
-        index = 1
-        matches_middle = matches_copy[1:-1].copy()
-
-        for mid_part in matches_middle:
-            if offset > 35:
-                del matches_copy[index]
-                continue
-            buffer = []
-            for letter in mid_part[::-1]:
-                buffer.append("i" + index_convert[offset] + letter)
-            offset += len(mid_part)
-            matches_copy[index] = " ".join(buffer)
-            index += 1
-
-    # Write rules
-    for filter_item in output_filter:
-        filter_output = []
-        if(filter_item == "solo" and len(matches_copy) == 1):
-            output_rule_file_handler[filter_item].write(matches_copy[0] + "\n")
-            continue
-
-        if len(matches_copy) < 2: continue
-        if filter_item == "solo": continue
-
-        if len(matches_copy) == 2:
-            if filter_item == "duostart":
-                output_rule_file_handler[filter_item].write(matches_copy[0] + "\n")
-                continue
-            if filter_item == "duoend":
-                output_rule_file_handler[filter_item].write(matches_copy[1] + "\n")
-                continue
-            if filter_item == "duo":
-                output_rule_file_handler[filter_item].write(matches_copy[0] + matches_copy[1] + "\n")
-                continue
-        if len(matches_copy) < 3: continue
-        if filter_item == "solo": continue
-        if filter_item == "duostart": continue
-        if filter_item == "duoend": continue
-        if filter_item == "duo": continue
-
-        start = matches_copy[0]
-        mid = matches_copy[1:-1]
-        end = matches_copy[-1]
-
-        _filter = filter_item
-        filter_output = []
-        while _filter != "":
-            if _filter.startswith("start"):
-                filter_output.append(start)
-                _filter = _filter[len("start"):]
-                continue
-
-            if _filter.startswith("mid"):
-                filter_output += mid
-                _filter = _filter[len("mid"):]
-                continue
-
-            if _filter.startswith("end"):
-                filter_output.append(end)
-                _filter = _filter[len("end"):]
-                continue
-
-        if "" in filter_output: filter_output.remove("")
-        if len(filter_output) > 0:
-            output_rule_file_handler[filter_item].write(" ".join(filter_output) + "\n")
+def open_writer(settings, prefix, buffer_size=1 << 20):
+    """Filter outputs can open thousands of files, so they ask for a smaller buffer."""
+    if settings["output_file"] is None:
+        return GramWriter(None, settings, buffer_size)
+    path = output_path(settings["output_file"], prefix)
+    try:
+        writer = GramWriter(path, settings, buffer_size)
+    except OSError as error:
+        raise UsageError("Cannot write " + path + ": " + (error.strerror or str(error)))
+    info("Writing output to: " + path)
+    settings["written_files"].append(path)
+    return writer
 
 
-def output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches):
-    matches_copy = matches.copy()
-    index_convert = [x for x in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
-    start_length = 0
-    
-    # Convert to rules
-    if len(matches_copy) >= 1:
-        start_length = len(matches_copy[0])
-        # start
-        buffer = []
-        for letter in matches_copy[0][::-1]:
-            buffer.append("^" + letter)
-        matches_copy[0] = " ".join(buffer)
-
-    if len(matches_copy) >= 2:
-        # end
-        buffer = []
-        for letter in matches_copy[-1]:
-            buffer.append("$" + letter)
-        matches_copy[-1] = " ".join(buffer)
-
-    if len(matches_copy) >= 3:
-        # mid
-        offset = start_length
-        index = 1
-        matches_middle = matches_copy[1:-1].copy()
-
-        for mid_part in matches_middle:
-            if offset > 35:
-                del matches_copy[index]
-                continue
-            buffer = []
-            for letter in mid_part:
-                offset+= 1
-                if offset > 35:
-                    continue
-                buffer.append("o" + index_convert[offset] + letter)
-            matches_copy[index] = " ".join(buffer)
-            index += 1
-
-    # Write rules
-    for filter_item in output_filter:
-        filter_output = []
-        if len(matches_copy) < 3: continue
-        if filter_item == "solo": continue
-        if filter_item == "duostart": continue
-        if filter_item == "duoend": continue
-        if filter_item == "duo": continue
-
-        start = matches_copy[0]
-        mid = matches_copy[1:-1]
-        end = matches_copy[-1]
-
-        _filter = filter_item
-        filter_output = []
-        has_mid = False
-        while _filter != "":
-            if _filter.startswith("start"):
-                filter_output.append(start)
-                _filter = _filter[len("start"):]
-                continue
-
-            if _filter.startswith("mid"):
-                has_mid = True
-                filter_output += mid
-                _filter = _filter[len("mid"):]
-                continue
-
-            if _filter.startswith("end"):
-                filter_output.append(end)
-                _filter = _filter[len("end"):]
-                continue
-
-        if not has_mid: continue
-        if "" in filter_output: filter_output.remove("")
-        if len(filter_output) > 0:
-            output_rule_file_handler[filter_item].write(" ".join(filter_output) + "\n")
+##############
+### N-gram ###
+##############
 
 def alphanum_string(stringx):
-    alphanumeric = ""
-    for character in stringx:
-        if character.isalnum():
-            alphanumeric += character
-    return alphanumeric
-
-def ngramify(docopt_args):
-    input_file = docopt_args.get('<input_file>')
-    output_file = docopt_args.get('<output_file>')
-    ngram_more = bool(docopt_args['--ngram-more'])
-    use_stdout = bool(docopt_args['--stdout'])
-    if ARGS.get('--min-length') is None:
-        min_length = 1
-    else:
-        min_length = int(docopt_args.get('--min-length'))
-
-    if ARGS.get('--max-length') is None:
-        max_length = 10
-    else:
-        max_length = int(docopt_args.get('--max-length'))
-
-    input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
-    if not use_stdout:
-        output_file_handler = open("n_" + output_file, "a+", encoding="utf-8", errors="ignore")
-        output_file_names.append("n_" + output_file)
-        print("Writing output to: n_" + output_file)
-
-    data_raw = ""
-    for line in input_file_handler:
-        data_raw += line.rstrip("\r\n") + " "
-
-    data = re.split(" ", data_raw)
-    data = list(filter(None, data))
-
-    for i in range(min_length, max_length+1, 1):
-        for j in range(0, len(data)-i+1, 1):
-            output_set = data[j:j+i]
-            if use_stdout:
-                print(" ".join(output_set))
-            else:
-                output_file_handler.write(" ".join(output_set) + "\n")
-
-    if ngram_more:
-        new_data = []
-        for word in data:
-            new_data.append(alphanum_string(word))
-        data = new_data
-
-        for i in range(min_length, max_length+1, 1):
-            for j in range(0, len(data)-i+1, 1):
-                output_set = data[j:j+i]
-            if use_stdout:
-                output_file_handler.write(" ".join(output_set) + "\n")
-            else:
-                print(" ".join(output_set))
-
-        for i in range(min_length, max_length+1, 1):
-            for j in range(0, len(data)-i+1, 1):
-                output_set = data[j:j+i]
-            if use_stdout:
-                output_file_handler.write(" ".join(output_set).lower() + "\n")
-            else:
-                print(" ".join(output_set).lower())
-
-    if not use_stdout: output_file_handler.close()
-    input_file_handler.close()
+    return "".join(character for character in stringx if character.isalnum())
 
 
-def kgramify(docopt_args):
-    input_file = docopt_args['<input_file>']
-    output_file = docopt_args['<output_file>']
-    rolling = bool(docopt_args['--rolling'])
-    use_stdout = bool(docopt_args['--stdout'])
-
-    if ARGS.get('--min-length') is None:
-        min_length = 3
-    else:
-        min_length = int(docopt_args.get('--min-length'))
+def push_word(window, word, max_length):
+    window.append(word)
+    if len(window) > max_length:
+        del window[0]
 
 
-    if ARGS.get('--max-length') is None:
-        max_length = 32 if rolling else 8
-    else:
-        max_length = int(docopt_args.get('--max-length'))
+def ngrams_ending_at_newest(window, min_length):
+    size = len(window)
+    return [" ".join(window[size - n:]) for n in range(min_length, size + 1)]
 
-    if rolling:
-        if not use_stdout: print("Writing output to: k_rolling." + output_file)
-        in_handler = open(input_file, encoding="utf-8", errors="ignore")
 
-        if not use_stdout:
-            out_handler = open("k_rolling."+ output_file, "a+", encoding="utf-8", errors="ignore")
-            output_file_names.append("k_rolling." + output_file)
+def ngramify(settings):
+    min_length, max_length = settings["min_length"], settings["max_length"]
+    ngram_more = settings["ngram_more"]
+    per_line = settings["per_line"]
+    out = open_writer(settings, "n_")
 
-        for line in in_handler:
-            original_plaintext = line.rstrip("\r\n")
-            for i in range(min_length, max_length+1):
-                for j in range(0, len(original_plaintext)+(1-i)):
-                    if use_stdout:
-                        print(original_plaintext[j:j+i])
-                    else:
-                        out_handler.write(original_plaintext[j:j+i] + "\n")
-
-        in_handler.close()
-        if not use_stdout: out_handler.close()
-
-    else:
-        if use_stdout:
-            print("Cannot use --stdout without --rolling")
-            sys.exit(-1)
-
-        print("Writing output to: k_start." + output_file)
-        print("Writing output to: k_mid." + output_file)
-        print("Writing output to: k_end." + output_file)
-        with open(input_file, encoding="utf-8", errors="ignore") as fp:
-            line = True
-            start_file_handler = open("k_start."+ output_file, "a+", encoding="utf-8", errors="ignore")
-            mid_file_handler = open("k_mid."+ output_file, "a+", encoding="utf-8", errors="ignore")
-            end_file_handler = open("k_end."+ output_file, "a+", encoding="utf-8", errors="ignore")
-            while line:
-                line = fp.readline()
-                original_plaintext = line.rstrip("\r\n")
-                return_array = [[],[],[]]
-                if len(original_plaintext) > 256:  # prevent recursion depth
+    # Stream through the words with a sliding window instead of loading the whole file
+    words = []
+    alnum_words = []
+    try:
+        for line in read_lines(settings["input_file"]):
+            if per_line:
+                words.clear()
+                alnum_words.clear()
+            grams = []
+            for word in line.split(" "):
+                if not word:
                     continue
-                return_array = kgramify_process(return_array, original_plaintext, 0, 1, min_length, max_length)  # minus one for array offset
-                for item in return_array[0]:
-                    start_file_handler.write(item + "\n")
-                for item in return_array[1]:
-                    mid_file_handler.write(item + "\n")
-                for item in return_array[2]:
-                    end_file_handler.write(item + "\n")
+                push_word(words, word, max_length)
+                grams += ngrams_ending_at_newest(words, min_length)
+                if ngram_more:
+                    alnum_word = alphanum_string(word)
+                    if not alnum_word:
+                        continue
+                    push_word(alnum_words, alnum_word, max_length)
+                    alnum_grams = ngrams_ending_at_newest(alnum_words, min_length)
+                    grams += alnum_grams
+                    grams += [gram.lower() for gram in alnum_grams]
+            out.add(grams)
+    finally:
+        out.close()
 
-            start_file_handler.close()
-            mid_file_handler.close()
-            end_file_handler.close()
-        output_file_names.append("k_start." + output_file)
-        output_file_names.append("k_mid." + output_file)
-        output_file_names.append("k_end." + output_file)
+
+##############
+### K-gram ###
+##############
+
+def kgrams_rolling(word, min_length, max_length):
+    word_length = len(word)
+    return [word[j:j + i]
+            for i in range(min_length, min(max_length, word_length) + 1)
+            for j in range(word_length - i + 1)]
 
 
-def kgramify_process(return_array, input_word, start, end, min_length, max_length):
-    if start >= len(input_word) or len(input_word) <= min_length:
-        return return_array
+def kgrams_split(word, min_length, max_length):
+    """Returns (start, mid, end) k-grams; see "Output files" in the help text."""
+    word_length = len(word)
+    if word_length <= min_length:
+        return [], [], []
+    longest = min(max_length, word_length - 1)
+    start = [word[:i] for i in range(min_length, longest + 1)]
+    mid = [word[j:j + max_length] for j in range(word_length - max_length + 1)] if word_length > max_length else []
+    end = [word[word_length - i:] for i in range(longest, min_length - 1, -1)]
+    return start, mid, end
 
-    elif start == 0 and end-start == max_length and end < len(input_word):
-        # First section & Mid section
-        next_start = start+1
-        next_end = end+1
-        if end-start >= min_length:
-            return_array[0].append(input_word[start:end])
-            return_array[1].append(input_word[start:end])
-    elif start > 0 and end-start == max_length and end < len(input_word):
-        # Middle section
-        next_start = start+1
-        next_end = end+1
-        if end-start >= min_length:
-            return_array[1].append(input_word[start:end])
-    elif end-start == max_length and end == len(input_word):
-        # Mid and End section
-        next_start = start+1
-        next_end = end
-        if end-start >= min_length:
-            return_array[1].append(input_word[start:end])
-            return_array[2].append(input_word[start:end])
 
-    elif start == 0 and end < len(input_word) and end-start <= max_length and end-start < len(input_word)-1:
-        # First section
-        next_start = start
-        next_end = end+1
-        if end-start >= min_length:
-            return_array[0].append(input_word[start:end])
+def kgramify(settings):
+    min_length, max_length = settings["min_length"], settings["max_length"]
+    lines = read_lines(settings["input_file"])
 
-    elif start == 0 and end < len(input_word) and end-start <= max_length and end-start == len(input_word)-1:
-        # First section
-        next_start = start+1
-        next_end = end+1
-        if end-start >= min_length:
-            return_array[0].append(input_word[start:end])
-    elif start > 0 and end == len(input_word) and end-start < max_length:
-        # Last section
-        next_start = start+1
-        next_end = end
-        if end-start >= min_length:
-            return_array[2].append(input_word[start:end])
+    if settings["rolling"]:
+        out = open_writer(settings, "k_rolling.")
+        try:
+            for line in lines:
+                out.add(kgrams_rolling(line, min_length, max_length), clean=line_is_clean(line))
+        finally:
+            out.close()
+        return
 
-    return kgramify_process(return_array, input_word, next_start, next_end, min_length, max_length)
+    outputs = [open_writer(settings, prefix) for prefix in ("k_start.", "k_mid.", "k_end.")]
+    try:
+        for line in lines:
+            clean = line_is_clean(line)
+            for out, grams in zip(outputs, kgrams_split(line, min_length, max_length)):
+                out.add(grams, clean=clean)
+    finally:
+        for out in outputs:
+            out.close()
 
-def generate_permutation_with_repeats(elements, length):
-    if length == 0:
-        return [""]
-    
-    permutations = []
-    for element in elements:
-        sub_permutations = generate_permutation_with_repeats(elements, length - 1)
-        for sub_permutation in sub_permutations:
-            permutations.append(element + sub_permutation)
-    
-    return permutations
 
-def has_repeating_substrings(s):
-    for i in range(len(s) - 1):
-        if s[i:i + 2] in s[i + 2:]:
+##############
+### C-gram ###
+##############
+
+def split_charset_runs(plaintext, classes):
+    """Split plaintext into runs of a single charset. Returns every run, whatever its length."""
+    runs = []
+    buffer = []
+    last_charset = None
+    for char in plaintext:
+        current_charset = classes.get(char, UNKNOWN)
+        if current_charset == UNKNOWN or current_charset == last_charset:  # treat unknown as every set
+            buffer.append(char)
+            continue
+        if last_charset == WORD_START and (current_charset == LOWER or current_charset == UPPER):
+            # Second letter of a run: "Password" stays one run
+            buffer.append(char)
+            last_charset = current_charset
+            continue
+        if buffer:
+            runs.append("".join(buffer))
+        buffer = [char]
+        last_charset = WORD_START if current_charset == LOWER or current_charset == UPPER else current_charset
+    if buffer:
+        runs.append("".join(buffer))
+    return runs
+
+
+def parse_filter(filter_item):
+    """Returns the filter as a list of start/mid/end tokens (or the shape filter name itself)."""
+    if filter_item in SHAPE_FILTERS:
+        return filter_item
+    tokens = []
+    rest = filter_item
+    while rest:
+        for token in POSITION_TOKENS:
+            if rest.startswith(token):
+                tokens.append(token)
+                rest = rest[len(token):]
+                break
+        else:
+            raise UsageError("--filter value \"" + filter_item + "\" is not a valid filter and must consist exclusively of solo, duo, duostart, duoend, start, mid, and end - or any combination of 'start, mid, or end'. (ex: startmidmidend)")
+    if not tokens:
+        raise UsageError("Empty --filter value.")
+    return tokens
+
+
+def is_repetition(item):
+    """"startstart" or "midendmidend" are covered by their shorter form already."""
+    for i in range(2, len(item) // 2 + 1):
+        if len(item) % i == 0 and item[:i] * (len(item) // i) == item:
             return True
     return False
 
-def glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, output_rule_file_handler, all_matches):
+
+def build_filters(filter_arg, combo_length):
+    filter_items = [item for item in (filter_arg or "").split(",") if item]
+    if combo_length:
+        for i in range(1, combo_length + 1):
+            for combination in product(POSITION_TOKENS, repeat=i):
+                item = "".join(combination)
+                if not is_repetition(item):
+                    filter_items.append(item)
+    filter_items = list(dict.fromkeys(filter_items))  # drop duplicates, keep order
+    return [(item, parse_filter(item)) for item in filter_items]
+
+
+def select_parts(spec, start, mids, end, part_count):
+    """Picks the parts a filter asks for, or None if it does not apply to this many parts."""
+    if spec == "solo":
+        return [start] if part_count == 1 else None
+    if spec in ("duo", "duostart", "duoend"):
+        if part_count != 2:
+            return None
+        return {"duo": [start, end], "duostart": [start], "duoend": [end]}[spec]
+    if part_count < 3:
+        return None
+    selected = []
+    for token in spec:
+        if token == "start":
+            selected.append(start)
+        elif token == "mid":
+            selected += mids
+        else:
+            selected.append(end)
+    return selected
+
+
+def rule_bytes(part):
+    """Hashcat rules work on bytes; anything not plainly printable is written as \\xHH."""
+    return [chr(byte) if 0x21 <= byte <= 0x7e and byte != 0x5c else "\\x%02x" % byte
+            for byte in part.encode("utf-8", "surrogateescape")]
+
+
+def prepend_rule(part):
+    return " ".join("^" + char for char in reversed(rule_bytes(part)))
+
+
+def append_rule(part):
+    return " ".join("$" + char for char in rule_bytes(part))
+
+
+def insert_rules(mids, offset):
+    """i-rules that insert each mid part after the previous one, starting at offset.
+    Returns None when a part would need a position hashcat cannot express (above Z)."""
+    rules = []
+    for mid in mids:
+        if offset >= len(RULE_POSITIONS):
+            return None
+        chars = rule_bytes(mid)
+        rules.append(" ".join("i" + RULE_POSITIONS[offset] + char for char in reversed(chars)))
+        offset += len(chars)
+    return rules
+
+
+def overwrite_rules(mids, offset):
+    """o-rules that overwrite the characters from offset onwards with the mid parts.
+    Returns None when a character would need a position hashcat cannot express (above Z)."""
+    rules = []
+    for mid in mids:
+        chars = rule_bytes(mid)
+        if offset + len(chars) > len(RULE_POSITIONS):
+            return None
+        rules.append(" ".join("o" + RULE_POSITIONS[offset + i] + char for i, char in enumerate(chars)))
+        offset += len(chars)
+    return rules
+
+
+def is_valid_rule(rule):
+    return len(rule) <= RULE_MAX_LENGTH and rule.count(" ") + 1 <= RULE_MAX_FUNCTIONS
+
+
+class FilterOutputs:
+    def __init__(self, settings):
+        self.filters = settings["filters"]
+        self.rulify = settings["rulify"]
+        self.skipped_rules = 0
+        self.gram_writers = {}
+        self.rule_writers = {}
+        for item, _ in self.filters:
+            self.gram_writers[item] = open_writer(settings, "c_" + item + "_", 1 << 16)
+            if self.rulify:
+                self.rule_writers[item] = open_writer(dict(settings, output_file=settings["output_file"] + ".rule"), "c_" + item + "_", 1 << 16)
+
+    def write(self, parts, clean):
+        if not self.filters or not parts:
+            return
+        part_count = len(parts)
+        start, mids, end = parts[0], parts[1:-1], parts[-1]
+        for item, spec in self.filters:
+            selected = select_parts(spec, start, mids, end, part_count)
+            if selected:
+                self.gram_writers[item].add(["".join(selected)], clean=clean)
+
+        if not self.rulify:
+            return
+        start_offset = len(start.encode("utf-8", "surrogateescape"))
+        start_rule = prepend_rule(start)
+        end_rule = append_rule(end)
+        inserted = insert_rules(mids, start_offset) if part_count >= 3 else []
+        overwritten = overwrite_rules(mids, start_offset) if part_count >= 3 else []
+        for item, spec in self.filters:
+            uses_mid = part_count >= 3 and "mid" in spec
+            rules = []
+            # Without every mid part the rule would build something else, so leave it out.
+            # Filters that do not use mid never look at the mid rules.
+            for mid_rules in ([inserted, overwritten] if uses_mid else [inserted or []]):
+                selected = select_parts(spec, start_rule, mid_rules, end_rule, part_count) if mid_rules is not None else None
+                if selected:
+                    rules.append(" ".join(selected))
+                elif uses_mid:
+                    self.skipped_rules += 1
+            valid = [rule for rule in rules if is_valid_rule(rule)]
+            self.skipped_rules += len(rules) - len(valid)
+            self.rule_writers[item].add(valid, clean=True)
+
+    def close(self):
+        for writer in list(self.gram_writers.values()) + list(self.rule_writers.values()):
+            writer.close()
+        if self.skipped_rules:
+            info("Skipped " + str(self.skipped_rules) + " rules that do not fit hashcat's limits ("
+                 + str(RULE_MAX_FUNCTIONS) + " functions, " + str(RULE_MAX_LENGTH) + " characters, positions up to "
+                 + RULE_POSITIONS[-1] + ").")
+
+
+def glue_parts(runs, in_range, grams, filter_outputs, clean):
+    """Glue runs that have a single character between them ("pass" "!" "word" -> "pass!word")"""
     while True:
-        has_new_matches = False
-        new_matches = []
+        glued_any = False
+        new_runs = []
         i = 0
-        while i < len(all_matches):
-            if i + 2 < len(all_matches) and len(all_matches[i + 1]) == 1:
-                has_new_matches = True
-                new_match = all_matches[i] + all_matches[i + 1] + all_matches[i + 2]
-                if len(new_match) >= min_length and len(new_match) <= max_length:
-                    output_file_handler.write(new_match + "\n")
-                    new_matches.append(new_match)
+        while i < len(runs):
+            if i + 2 < len(runs) and len(runs[i + 1]) == 1:
+                glued = runs[i] + runs[i + 1] + runs[i + 2]
+                glued_any = True
+                if in_range(glued):
+                    grams.append(glued)
+                new_runs.append(glued)
                 i += 3
             else:
-                new_matches.append(all_matches[i])
+                new_runs.append(runs[i])
                 i += 1
 
-        if not has_new_matches: return
-        output_filter_writer(output_filter, output_filter_file_handler, new_matches)
-        if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, new_matches)
-        if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, new_matches)
+        if not glued_any:
+            return
+        filter_outputs.write([run for run in new_runs if in_range(run)], clean)
+        runs = new_runs
 
-        all_matches = new_matches
 
-def blocks(files, size=65536):
-    while True:
-        b = files.read(size)
-        if not b: break
-        yield b
+def cgramify(settings):
+    min_length, max_length = settings["min_length"], settings["max_length"]
+    passes = [STRICT_CLASSES]
+    if settings["mixed"]:
+        # Mixed case + less strict special check, then mixed numeric case + less strict special check
+        passes += [MIXED_CLASSES, MIXED_NUMERIC_CLASSES]
 
-def cgramify(docopt_args):
-    input_file = docopt_args['<input_file>']
-    output_file = docopt_args['<output_file>']
-    lowercase =    set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'])
-    uppercase =    set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'])
-    numeric =      set(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
-    special =      set(['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' '])
-    special_full = set(['!', '"', '#', '$', '%', '&', '(', ')', '*', '+', ',', '.', '/', ';', '<', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~', '+', ' ', '\'', '-'])
-    cgram_rulify = False
-    # does not include ' and - because of their common use in normal language
+    def in_range(run):
+        return min_length <= len(run) <= max_length
 
-    if ARGS.get('--min-length') is None:
-        min_length = 3
+    out = open_writer(settings, "c_")
+    filter_outputs = FilterOutputs(settings)
+    try:
+        for line in read_lines(settings["input_file"]):
+            clean = line_is_clean(line)
+            grams = []
+            for classes in passes:
+                runs = split_charset_runs(line, classes)
+                matches = [run for run in runs if in_range(run)]
+                grams += matches
+                filter_outputs.write(matches, clean)
+                glue_parts(runs, in_range, grams, filter_outputs, clean)
+            out.add(grams, clean=clean)
+    finally:
+        out.close()
+        filter_outputs.close()
+
+
+############
+### Main ###
+############
+
+def parse_int(args, option, minimum):
+    value = args.get(option)
+    if value is None:
+        return None
+    try:
+        number = int(value)
+    except ValueError:
+        raise UsageError(option + " should be a whole number.")
+    if number < minimum:
+        raise UsageError(option + " should be " + str(minimum) + " or more.")
+    return number
+
+
+def build_settings(args):
+    if args["word"]:
+        mode, default_min, default_max = "word", 1, 10
+    elif args["character"]:
+        mode, default_min, default_max = "character", 3, 32 if args["--rolling"] else 8
     else:
-        min_length = int(docopt_args.get('--min-length'))
+        mode, default_min, default_max = "charset", 3, 32
 
-    if ARGS.get('--cgram-rulify-beta'):
-        cgram_rulify = True
+    min_length = parse_int(args, "--min-length", 1)
+    max_length = parse_int(args, "--max-length", 1)
+    min_length = default_min if min_length is None else min_length
+    max_length = default_max if max_length is None else max_length
+    if min_length > max_length:
+        raise UsageError("Min Length (" + str(min_length) + ") should be smaller or equal to Max length (" + str(max_length) + ").")
 
-    if ARGS.get('--max-length') is None:
-        max_length = 32
-    else:
-        max_length = int(docopt_args.get('--max-length'))
+    min_count = parse_int(args, "--min-count", 1)
+    count = bool(args["--count"]) or min_count is not None
+    if count and args["--append"]:
+        raise UsageError("--count/--min-count cannot be combined with --append.")
 
-    if ARGS.get('--filter') is None:
-        output_filter = []
-    else:
-        if ARGS.get('--filter') is not None:
-            output_filter = docopt_args.get('--filter')
-            output_filter = output_filter.split(",")
-            if "" in output_filter: output_filter.remove("")
+    input_file = args["<input_file>"]
+    if input_file == "-" and sys.stdin is None:
+        raise UsageError("STDIN is not available.")
+    if input_file != "-" and (not os.path.exists(input_file) or os.path.isdir(input_file)):
+        raise UsageError("Input file does not exist.")
 
-    if ARGS.get('--filter-combo-length-beta') is not None:
-        output_filter_count = int(docopt_args.get('--filter-combo-length'))
-        all_combinations = []
-        for i in range(1, output_filter_count+1):
-            all_combinations += generate_permutation_with_repeats(["start", "mid", "end"], i)
+    settings = {
+        "mode": mode,
+        "input_file": input_file,
+        "output_file": None if args["--stdout"] else args["<output_file>"],
+        "min_length": min_length,
+        "max_length": max_length,
+        "count": count,
+        "min_count": min_count or 1,
+        "append": bool(args["--append"]),
+        "ngram_more": bool(args.get("--ngram-more")),
+        "per_line": bool(args.get("--per-line")),
+        "rolling": bool(args.get("--rolling")),
+        "mixed": bool(args.get("--mixed")),
+        "rulify": bool(args.get("--cgram-rulify-beta")),
+        "filters": [],
+        "written_files": [],
+    }
 
-        combinations_output = all_combinations.copy()
-        for item in all_combinations:
-            res = ""
-            for i in range(1, len(item)//2 + 1):
-                if (not len(item) % len(item[0:i]) and item[0:i] *
-                    (len(item)//len(item[0:i])) == item):
-                    res = item[0:i]
-            
-            if len(res) > 1:
-                combinations_output.remove(item)
-        output_filter += combinations_output
+    if mode == "character" and args["--stdout"] and not settings["rolling"]:
+        raise UsageError("Cannot use --stdout without --rolling")
 
-        for item in output_filter:  # using this more complex filter to allow for more complex filters in the future such as startmidstartend
-            original_item = item
-            if item in ["solo", "duo", "duostart", "duoend"]: continue
-            while(len(item) > 0):
-                match = False
-                if item.startswith("start"):
-                    match = True
-                    item = item[len("start"):]
-                if item.startswith("mid"):
-                    if(min_length != 1):
-                        print("Warning: You are using a filter with 'mid'. It is highly advised to set --min-length to 1 for this.")
-                    match =  True
-                    item = item[len("mid"):]
-                if item.startswith("end"):
-                    match =  True
-                    item = item[len("end"):]
-                if not match:
-                    break
-            if(len(item) > 0):
-                print("--filter value \"" + original_item + "\" is not a valid filter and must consist exclusively of solo, duo, duostart, duoend, start, mid, and end - or any combination of 'start, mid, or end'. (ex: startmidmidend)")
-                sys.exit()
+    if mode == "charset":
+        settings["filters"] = build_filters(args["--filter"], parse_int(args, "--filter-combo-length", 1))
+        if settings["filters"] and args["--stdout"]:
+            raise UsageError("--filter and --filter-combo-length write separate files and cannot be used with --stdout.")
+        if settings["rulify"] and not settings["filters"]:
+            raise UsageError("--cgram-rulify-beta converts the --filter outputs, so it needs --filter or --filter-combo-length.")
+        if min_length != 1 and any("mid" in spec for _, spec in settings["filters"]):
+            info("Warning: You are using a filter with 'mid'. It is highly advised to set --min-length to 1 for this.")
 
-    print("Counting lines")
-    with open(input_file, "r",encoding="utf-8",errors='ignore') as f:
-        line_count = sum(bl.count("\n") for bl in blocks(f))
-    
-    input_file_handler = open(input_file, "r", encoding="utf-8", errors="ignore")
-    output_file_handler = open("c_" + output_file, "a+", encoding="utf-8", errors="ignore")
-    print("Writing output to: c_" + output_file)
-    output_file_names.append("c_" + output_file)
-
-    output_filter_file_handler = {}
-    for item in output_filter:
-        output_filter_file_handler[item] = open("c_" + item + "_" + output_file, "a+", encoding="utf-8", errors="ignore")
-        print("Writing filter output to: c_" + item + "_" + output_file)
-        output_file_names.append("c_" + item + "_" + output_file)
-
-    output_rule_file_handler = {}
-    if cgram_rulify:
-        for item in output_filter:
-            output_rule_file_handler[item] = open("c_" + item + "_" + output_file + ".rule", "a+", encoding="utf-8", errors="ignore")
-            print("Writing rule output to: c_" + item + "_" + output_file + ".rule")
-            output_file_names.append("c_" + item + "_" + output_file + ".rule")
-
-    ########################
-    ### Start processing ###
-    ########################
-    for line in tqdm(input_file_handler, bar_format='{l_bar}{bar:50}{r_bar}{bar:-50b}', total=line_count, miniters=10000):
-        original_plaintext = line.rstrip("\r\n")
-
-        # Handle $HEX[] notation
-        if line.startswith("$HEX["):
-            try:
-                line = binascii.unhexlify(line[5:-1])
-            except binascii.Error:
-                continue
-
-        last_charset = 'empty'
-        character_buffer = []
-        matches = []
-        all_matches = []
-        for char in original_plaintext:
-            is_lowercase = True if char in lowercase else False
-            if not is_lowercase:
-                is_uppercase = True if char in uppercase else False
-
-            if len(character_buffer) == 0 and (is_lowercase or is_uppercase):
-                current_charset = 'mixedcase'
-            elif is_lowercase:
-                current_charset = 'lowercase'
-            elif is_uppercase:
-                current_charset = 'uppercase'
-            elif char in numeric:
-                current_charset = 'numeric'
-            elif char in special_full:  # use special full on the most strict pass
-                current_charset = 'special'
-            else:
-                current_charset = 'unknown'
-
-            if current_charset == last_charset or current_charset == 'unknown':  # treat unknown as every set
-                character_buffer.append(char)
-                continue
-
-            if current_charset in ['lowercase', 'uppercase'] and last_charset == 'mixedcase':
-                character_buffer.append(char)
-                last_charset = current_charset
-                continue
-
-            if len(character_buffer) > 0:
-                all_matches.append("".join(character_buffer))
-            if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
-                output_file_handler.write("".join(character_buffer) + "\n")
-                matches.append("".join(character_buffer))
-                if(current_charset == 'lowercase' or current_charset == 'uppercase'):
-                    current_charset = 'mixedcase'
-
-            last_charset = current_charset
-            character_buffer = [char]
-
-        if len(character_buffer) > 0:
-            all_matches.append("".join(character_buffer))
-        if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
-            output_file_handler.write("".join(character_buffer) + "\n")
-            matches.append("".join(character_buffer))
-
-        # Output matches into filter outputs
-        output_filter_writer(output_filter, output_filter_file_handler, matches)
-        if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, matches)
-        if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches)
-
-        # get new matches by glueing together parts that have 1-length in between
-        glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, output_rule_file_handler, all_matches)
-
-        if ARGS.get('--mixed'):
-            # Mixed case + less strict special check
-            lowercased = False
-            matches = []
-            all_matches = []
-            character_buffer = []
-            last_charset = "empty"
-            for char in original_plaintext:
-                if char in lowercase or char in uppercase:
-                    current_charset = 'mixedcase'
-                elif char in numeric:
-                    current_charset = 'numeric'
-                elif char in special:
-                    current_charset = 'special'
-                else:
-                    current_charset = 'unknown'
-
-                if current_charset == last_charset or current_charset == 'unknown':  # treat unknown as every set
-                    character_buffer.append(char)
-                else:
-                    if len(character_buffer) > 0:
-                        all_matches.append("".join(character_buffer))
-                    if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
-                        output_file_handler.write("".join(character_buffer) + "\n")
-                        matches.append("".join(character_buffer))
-                    last_charset = current_charset
-                    character_buffer = [char]
-            
-            if len(character_buffer) > 0:
-                all_matches.append("".join(character_buffer))
-            if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
-                output_file_handler.write("".join(character_buffer) + "\n")
-                matches.append("".join(character_buffer))
-
-            # Output matches into filter outputs
-            output_filter_writer(output_filter, output_filter_file_handler, matches)
-            if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, matches)
-            if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches)
-
-            # get new matches by glueing together parts that have 1-length in between
-            glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, output_rule_file_handler, all_matches)
+    check_outputs(settings)
+    return settings
 
 
-            matches = []
-            all_matches = []
-            character_buffer = []
+def main():
+    global QUIET
+    args = docopt(__doc__, version=VERSION)
+    QUIET = bool(args["--quiet"]) or sys.stderr is None
+    try:
+        settings = build_settings(args)
+        {"word": ngramify, "character": kgramify, "charset": cgramify}[settings["mode"]](settings)
+    except UsageError as error:
+        error_message(error)
+        sys.exit(1)
 
-            # Mixed numeric case + less strict special check
-            for char in original_plaintext:
-                if char in lowercase or char in uppercase or char in numeric:
-                    current_charset = 'mixedcasenumeric'
-                elif char in special:
-                    current_charset = 'special'
-                else:
-                    current_charset = 'unknown'
+    if settings["written_files"] and not settings["count"]:
+        info("")
+        info("Don't forget to de-duplicate and sort the output (or use --count next time).\nRecommended commands:")
+        for item in settings["written_files"]:
+            info("LC_ALL=C sort \"" + item + "\" | uniq -c | LC_ALL=C sort -rn | awk '$1 >= 5' | sed -E 's/^ *[0-9]+ //' > \"" + item + ".sorted\"")
 
-                if current_charset == last_charset or current_charset == 'unknown':  # treat unknown as every set
-                    character_buffer.append(char)
-                else:
-                    if len(character_buffer) > 0:
-                        all_matches.append("".join(character_buffer))
-                    if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
-                        output_file_handler.write("".join(character_buffer) + "\n")
-                        matches.append("".join(character_buffer))
-                    last_charset = current_charset
-                    character_buffer = [char]
 
-            if len(character_buffer) > 0:
-                all_matches.append("".join(character_buffer))
-            if len(character_buffer) >= min_length and len(character_buffer) <= max_length:
-                output_file_handler.write("".join(character_buffer) + "\n")
-                matches.append("".join(character_buffer))
-
-            # Output matches into filter outputs
-            output_filter_writer(output_filter, output_filter_file_handler, matches)
-            if cgram_rulify: output_rule_filter_writer(output_filter, output_rule_file_handler, matches)
-            if cgram_rulify: output_rule_filter_writer_overwrite(output_filter, output_rule_file_handler, matches)
-
-            # get new matches by glueing together parts that have 1-length in between
-            glue_parts(cgram_rulify, min_length, max_length, output_filter, output_file_handler, output_filter_file_handler, output_rule_file_handler, all_matches)
-
-    # Close file handles
-    input_file_handler.close()
-    output_file_handler.close()
-    for filter_item in output_filter:
-        output_filter_file_handler[filter_item].close()
+QUIET = False
 
 if __name__ == '__main__':
-    ARGS = docopt(__doc__, version='2.5')
-    if not os.path.exists(ARGS.get('<input_file>')):
-        print("Input file does not exist.")
-        sys.exit()
-
-    if ARGS.get('--min-length') is not None and int(ARGS.get('--min-length')) < 0:
-        print("Min Length should be greater than 0.")
-        sys.exit()
-
-    if ARGS.get('--max-length') is not None and int(ARGS.get('--max-length', 1)) < 0:
-        print("Max Length should be greater than 0.")
-        sys.exit()
-
-    if ARGS.get('--min-length') is not None and ARGS.get('--max-length') is not None:
-        if int(ARGS.get('--min-length')) > int(ARGS.get('--max-length')):
-            print("Min Length should be smaller or equal to Max length.")
-            exit()
-
-    if ARGS.get('--filter-combo-length') is not None and not ARGS.get('--filter-combo-length').isnumeric():
-        print("Filter combo length should be numeric")
-        exit()
-
-    if ARGS.get('word'):
-        ngramify(ARGS)
-
-    if ARGS.get('character'):
-        kgramify(ARGS)
-
-    if ARGS.get('charset'):
-        cgramify(ARGS)
-    print()
-    print("Don't forget to de-duplicate and sort the output.\nRecommended commands:")
-    for item in output_file_names:
-        print("cat \"" + item + "\" | sort | uniq -c | sort -rn | awk '($1 >= 5)' | awk '{if ($1 >=1) {$1=\"\"; print substr($0, index($0, $2))}}' > \"" + item + ".sorted\"")
-
+    try:
+        main()
+    except BrokenPipeError:
+        # Output was piped into something like head that stopped reading
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
